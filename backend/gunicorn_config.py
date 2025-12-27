@@ -1,7 +1,8 @@
 
 import multiprocessing
 
-bind = "0.0.0.0:8099"
+import os
+bind = f"0.0.0.0:{os.getenv('FLASK_PORT', '8099')}"
 backlog = 2048
 
 workers = multiprocessing.cpu_count() * 2 + 1

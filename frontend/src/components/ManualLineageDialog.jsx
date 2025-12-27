@@ -54,7 +54,16 @@ const ManualLineageDialog = ({ open, onClose, onSuccess }) => {
   }, [open]);
 
   const fetchAssets = async () => {
-    setAssets([]);
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/assets`);
+      if (response.ok) {
+        const data = await response.json();
+        setAssets(data);
+      }
+    } catch (error) {
+      console.error('Error fetching assets:', error);
+    }
   };
 
   const handleAddColumnMapping = () => {
@@ -84,27 +93,38 @@ const ManualLineageDialog = ({ open, onClose, onSuccess }) => {
     setSuccess(null);
 
     try {
-      const proposalData = {
-        source: sourceAsset.id,
-        target: targetAsset.id,
-        relationship: relationship,
-        column_lineage: columnMappings.length > 0 ? columnMappings.map(m => ({
-          source_table: sourceAsset.id,
-          source_column: m.source_column,
-          target_table: targetAsset.id,
-          target_column: m.target_column,
-          relationship_type: m.relationship_type
-        })) : [],
-        notes: notes || `Manual lineage entry created via UI`
-      };
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/lineage/relationships`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          source_asset_id: sourceAsset.id,
+          target_asset_id: targetAsset.id,
+          relationship_type: relationship,
+          column_lineage: columnMappings.length > 0 ? columnMappings.map(m => ({
+            source_column: m.source_column,
+            target_column: m.target_column,
+            transformation: 'pass_through',
+            transformation_type: 'pass_through'
+          })) : [],
+          transformation_description: notes || `Manual lineage entry created via UI`,
+          confidence_score: 1.0,
+          extraction_method: 'manual'
+        }),
+      });
 
-      
-      const result = { success: false, message: 'Backend API removed' };
-      setSuccess('Manual lineage relation created successfully!');
-      setTimeout(() => {
-        onSuccess && onSuccess();
-        handleClose();
-      }, 1500);
+      if (response.ok) {
+        setSuccess('Manual lineage relation created successfully!');
+        setTimeout(() => {
+          onSuccess && onSuccess();
+          handleClose();
+        }, 1500);
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create lineage relationship');
+      }
     } catch (err) {
       console.error('Error submitting lineage proposal:', err);
       setError(err.message || 'Failed to submit lineage proposal. Please check your connection and try again.');
@@ -157,7 +177,7 @@ const ManualLineageDialog = ({ open, onClose, onSuccess }) => {
         setLoading(false);
       });
 
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       xhr.open('POST', `${API_BASE_URL}/api/lineage/curation/upload`);
       xhr.withCredentials = true;
       xhr.send(formData);

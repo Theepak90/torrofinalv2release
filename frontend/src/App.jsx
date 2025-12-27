@@ -6,7 +6,6 @@ import CssBaseline from '@mui/material/CssBaseline';
 import Layout from './components/Layout';
 
 import AssetsPage from './pages/AssetsPage';
-import MarketplacePage from './pages/MarketplacePage';
 import DataLineagePage from './pages/DataLineagePage';
 import ConnectorsPage from './pages/ConnectorsPage';
 
@@ -85,7 +84,6 @@ function App() {
             <Route index element={<AssetsPage />} />
             <Route path="assets" element={<AssetsPage />} />
             <Route path="lineage" element={<DataLineagePage />} />
-            <Route path="marketplace" element={<MarketplacePage />} />
             <Route path="connectors" element={<ConnectorsPage />} />
           </Route>
         </Routes>

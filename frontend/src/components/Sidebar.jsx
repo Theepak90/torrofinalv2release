@@ -12,7 +12,6 @@ import {
   Dashboard,
   Storage,
   AccountTree,
-  Publish,
   Search,
   Timeline,
   Settings,
@@ -26,8 +25,7 @@ const Sidebar = ({ open, onClose }) => {
   const menuItems = [
     { label: 'Connectors', icon: <Settings />, path: '/connectors' },
     { label: 'Discovered Assets', icon: <AccountTree />, path: '/' },
-        { label: 'Data Lineage', icon: <Timeline />, path: '/lineage' },
-    { label: 'Publish Assets to Marketplace', icon: <Publish />, path: '/marketplace' },
+    { label: 'Data Lineage', icon: <Timeline />, path: '/lineage' },
   ];
 
   const handleItemClick = (path) => {

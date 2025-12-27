@@ -59,7 +59,7 @@ import {
 } from '@mui/icons-material';
 
 const MarketplacePage = () => {
-  const [resourceType, setResourceType] = useState('Parquet Files');
+  const [resourceType, setResourceType] = useState('');
   const [catalog, setCatalog] = useState('');
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -87,7 +87,7 @@ const MarketplacePage = () => {
     
     if (!catalog || !fileName) {
       setError('Please fill in Catalog and File Name');
-        return;
+      return;
     }
 
     setLoading(true);
@@ -96,7 +96,7 @@ const MarketplacePage = () => {
 
     try {
       
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets`);
       if (!response.ok) {
         throw new Error('Failed to fetch assets');
@@ -104,53 +104,44 @@ const MarketplacePage = () => {
       
       const allAssets = await response.json();
       
-      
-      const parquetAssets = allAssets.filter(asset => asset.connector_id?.startsWith('parquet_test_'));
-      
       let matchingAsset = null;
       
       if (catalog && fileName) {
-        
-        matchingAsset = parquetAssets.find(asset => {
+        matchingAsset = allAssets.find(asset => {
           const catalogMatch = asset.catalog?.toLowerCase() === catalog.toLowerCase();
           const fileNameLower = fileName.toLowerCase();
           const assetNameLower = asset.name?.toLowerCase() || '';
           const nameMatch = assetNameLower === fileNameLower ||
-            assetNameLower === `${fileNameLower}.parquet` ||
             assetNameLower.includes(fileNameLower) ||
-            fileNameLower.includes(assetNameLower.replace('.parquet', ''));
+            fileNameLower.includes(assetNameLower);
           return catalogMatch && nameMatch;
         });
         
-        
         if (!matchingAsset) {
-          matchingAsset = parquetAssets.find(asset => {
+          matchingAsset = allAssets.find(asset => {
             const catalogMatch = asset.catalog?.toLowerCase().includes(catalog.toLowerCase()) ||
               catalog.toLowerCase().includes(asset.catalog?.toLowerCase() || '');
             const fileNameLower = fileName.toLowerCase();
             const assetNameLower = asset.name?.toLowerCase() || '';
             const nameMatch = assetNameLower.includes(fileNameLower) ||
-              fileNameLower.includes(assetNameLower.replace('.parquet', ''));
+              fileNameLower.includes(assetNameLower);
             return catalogMatch && nameMatch;
           });
         }
       } else if (fileName) {
-        
         const fileNameLower = fileName.toLowerCase();
-        matchingAsset = parquetAssets.find(asset => {
+        matchingAsset = allAssets.find(asset => {
           const assetNameLower = asset.name?.toLowerCase() || '';
           return assetNameLower.includes(fileNameLower) ||
-            fileNameLower.includes(assetNameLower.replace('.parquet', ''));
+            fileNameLower.includes(assetNameLower);
         });
       }
 
       if (!matchingAsset) {
+        const availableCatalogs = [...new Set(allAssets.map(a => a.catalog))];
+        const availableFiles = allAssets.map(a => `${a.catalog}/${a.name}`);
         
-        const parquetAssets = allAssets.filter(a => a.connector_id?.startsWith('parquet_test_'));
-        const availableCatalogs = [...new Set(parquetAssets.map(a => a.catalog))];
-        const availableFiles = parquetAssets.map(a => `${a.catalog}/${a.name}`);
-        
-        let errorMsg = `Parquet file not found: ${catalog || '(no catalog)'}/${fileName || '(no file name)'}`;
+        let errorMsg = `Asset not found: ${catalog || '(no catalog)'}/${fileName || '(no file name)'}`;
         if (availableCatalogs.length > 0) {
           errorMsg += `\n\nAvailable catalogs: ${availableCatalogs.join(', ')}`;
         }
@@ -190,7 +181,7 @@ const MarketplacePage = () => {
       if (import.meta.env.DEV) {
       console.error('API call failed:', err.message);
       }
-      setError(`Failed to fetch parquet file details: ${err.message}`);
+      setError(`Failed to fetch asset details: ${err.message}`);
       setLoading(false);
     }
   };
@@ -223,7 +214,7 @@ const MarketplacePage = () => {
       );
         
         
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
         const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -245,7 +236,7 @@ const MarketplacePage = () => {
         const updatedTableTags = [...tableTags, newTag.trim()];
         
         
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
         const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -304,7 +295,7 @@ const MarketplacePage = () => {
       const updatedTableTags = [...currentTags, 'archive'];
       
       
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
         method: 'PUT',
           headers: {
@@ -355,7 +346,7 @@ const MarketplacePage = () => {
       await new Promise(resolve => setTimeout(resolve, 4000));
       
       
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -385,7 +376,7 @@ const MarketplacePage = () => {
 
       
       const piiColumns = tableData.columns.filter(col => col.piiFound);
-      const tableName = tableData.name.replace('.parquet', '');
+      const tableName = tableData.name;
       const fullTableName = `${tableData.catalog}.${tableName}`;
       
       let sqlCommands = [];
@@ -442,7 +433,7 @@ const MarketplacePage = () => {
       );
       
       
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -662,13 +653,13 @@ const MarketplacePage = () => {
                     <strong>Catalog:</strong> The connection name you gave when creating the connection
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 1, fontStyle: 'italic' }}>
-                    Example: "Test" or "My Parquet Connection"
+                    Example: "Test" or "My Connection"
                   </Typography>
                   <Typography variant="body2" sx={{ mb: 0.5 }}>
-                    <strong>File Name:</strong> The actual name of the parquet file
+                    <strong>File Name:</strong> The actual name of the asset file
                   </Typography>
                   <Typography variant="body2" sx={{ fontStyle: 'italic' }}>
-                    Example: "users_premium.parquet" or "sales_q1_2024.parquet"
+                    Example: "users_premium" or "sales_q1_2024"
                   </Typography>
                 </Box>
               }
@@ -682,41 +673,8 @@ const MarketplacePage = () => {
           </Box>
 
           {}
-          <FormControl component="fieldset" sx={{ mb: 4 }}>
-            <FormLabel 
-              component="legend" 
-              sx={{ 
-                color: '#1976d2', 
-                fontWeight: 600, 
-                mb: 2,
-                fontSize: '1rem'
-              }}
-            >
-              Resource Type *
-            </FormLabel>
-            <RadioGroup
-              value={resourceType}
-              onChange={(e) => setResourceType(e.target.value)}
-              row
-              sx={{ gap: 2 }}
-            >
-              <FormControlLabel 
-                value="Parquet Files" 
-                control={<Radio />} 
-                label="Parquet Files" 
-                sx={{ 
-                  '& .MuiFormControlLabel-label': { 
-                    fontWeight: 500,
-                    color: '#333'
-                  }
-                }}
-              />
-            </RadioGroup>
-          </FormControl>
-
-          {}
           <Grid container spacing={3} sx={{ mb: 4 }}>
-            {resourceType === 'Parquet Files' && (
+            {(
               <>
                 <Grid item xs={12} sm={5}>
                   <FormControl fullWidth>
@@ -976,7 +934,7 @@ const MarketplacePage = () => {
                           const updatedTableTags = tableData.tableTags.filter((_, i) => i !== idx);
                             
                             
-                            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+                            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
         const response = await fetch(`${API_BASE_URL}/api/assets/${tableData.id}`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
@@ -1243,7 +1201,7 @@ const MarketplacePage = () => {
                   )}
                 />
                 <Typography variant="body2" sx={{ mt: 1, color: '#666' }}>
-                  This tag will be added to the parquet file.
+                  This tag will be added to the asset.
                 </Typography>
               </Box>
             </DialogContent>

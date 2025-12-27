@@ -41,14 +41,19 @@ import {
   Warning,
   CheckCircle,
   Close,
+  ThumbUp,
+  ThumbDown,
+  Publish,
 } from '@mui/icons-material';
 
 const AssetsPage = () => {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [discoveryIdSearch, setDiscoveryIdSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [catalogFilter, setCatalogFilter] = useState('');
+  const [approvalStatusFilter, setApprovalStatusFilter] = useState('');
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
@@ -58,6 +63,14 @@ const AssetsPage = () => {
   const [originalSensitivityLevel, setOriginalSensitivityLevel] = useState('medium');
   const [savingMetadata, setSavingMetadata] = useState(false);
   
+  // Rejection dialog state
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [assetToReject, setAssetToReject] = useState(null);
+  
+  // Discovery details dialog state
+  const [discoveryDetailsOpen, setDiscoveryDetailsOpen] = useState(false);
+  const [discoveryDetails, setDiscoveryDetails] = useState(null);
   
   const [currentPage, setCurrentPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
@@ -67,13 +80,17 @@ const AssetsPage = () => {
 
   useEffect(() => {
     fetchAssets();
-  }, [currentPage, pageSize, searchTerm, typeFilter, catalogFilter]);
+  }, [currentPage, pageSize, searchTerm, discoveryIdSearch, typeFilter, catalogFilter, approvalStatusFilter]);
 
   const fetchAssets = async (pageOverride = null) => {
       setLoading(true);
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
-      const response = await fetch(`${API_BASE_URL}/api/assets`);
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      // If discovery_id is provided, search by it
+      const url = discoveryIdSearch 
+        ? `${API_BASE_URL}/api/assets?discovery_id=${discoveryIdSearch}`
+        : `${API_BASE_URL}/api/assets`;
+      const response = await fetch(url);
       if (response.ok) {
       const data = await response.json();
         setAllAssets(data);
@@ -92,6 +109,12 @@ const AssetsPage = () => {
         }
         if (catalogFilter) {
           filtered = filtered.filter(asset => asset.catalog === catalogFilter);
+        }
+        if (approvalStatusFilter) {
+          filtered = filtered.filter(asset => {
+            const status = asset.operational_metadata?.approval_status || 'pending_review';
+            return status === approvalStatusFilter;
+          });
         }
         
         
@@ -121,19 +144,230 @@ const AssetsPage = () => {
 
   const getDataSource = (connectorId) => {
     if (!connectorId) return 'Unknown';
-    if (connectorId.startsWith('parquet_test_')) return 'Parquet Files';
-    return 'Unknown';
+    
+    // Parse connector_id format: azure_blob_{connection_name}
+    if (connectorId.startsWith('azure_blob_')) {
+      return 'Azure Blob Storage';
+    }
+    
+    // Handle other connector types if needed
+    if (connectorId.startsWith('azure_')) {
+      return 'Azure Storage';
+    }
+    
+    // Fallback to connector_id if it doesn't match known patterns
+    return connectorId;
   };
 
   const getDataSourceColor = (connectorId) => {
-    if (connectorId && connectorId.startsWith('parquet_test_')) return 'primary';
+    if (!connectorId) return 'default';
+    
+    if (connectorId.startsWith('azure_blob_') || connectorId.startsWith('azure_')) {
+      return 'primary';
+    }
+    
     return 'default';
+  };
+
+  const handleApproveAsset = async (assetId) => {
+    // Optimistic update - update UI immediately
+    const asset = allAssets.find(a => a.id === assetId);
+    if (asset) {
+      const updatedAsset = {
+        ...asset,
+        operational_metadata: {
+          ...(asset.operational_metadata || {}),
+          approval_status: 'approved',
+          approved_at: new Date().toISOString()
+        }
+      };
+      setAllAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+      setAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+      
+      if (import.meta.env.DEV) {
+        console.log('Optimistic update - Asset approved:', assetId, updatedAsset.operational_metadata);
+      }
+    }
+    
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/assets/${assetId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        // Update with server response - merge the updated asset data
+        const updatedAssetFromServer = {
+          ...asset,
+          ...result,
+          operational_metadata: {
+            ...(asset?.operational_metadata || {}),
+            ...(result.operational_metadata || {}),
+            approval_status: 'approved',
+            approved_at: result.updated_at || result.operational_metadata?.approved_at || new Date().toISOString()
+          }
+        };
+        
+        if (import.meta.env.DEV) {
+          console.log('Server response - Updated asset:', assetId, updatedAssetFromServer.operational_metadata);
+        }
+        
+        // Update both allAssets and assets state
+        const updatedAllAssets = allAssets.map(a => a.id === assetId ? updatedAssetFromServer : a);
+        setAllAssets(updatedAllAssets);
+        
+        // Re-filter and update displayed assets
+        let filtered = updatedAllAssets;
+        if (searchTerm) {
+          filtered = filtered.filter(a => 
+            a.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (a.catalog && a.catalog.toLowerCase().includes(searchTerm.toLowerCase()))
+          );
+        }
+        if (typeFilter) {
+          filtered = filtered.filter(a => a.type === typeFilter);
+        }
+        if (catalogFilter) {
+          filtered = filtered.filter(a => a.catalog === catalogFilter);
+        }
+        if (approvalStatusFilter) {
+          filtered = filtered.filter(a => {
+            const status = a.operational_metadata?.approval_status || 'pending_review';
+            return status === approvalStatusFilter;
+          });
+        }
+        const page = currentPage;
+        const start = page * pageSize;
+        const end = start + pageSize;
+        setAssets(filtered.slice(start, end));
+      } else {
+        // Revert on error
+        await fetchAssets();
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to approve asset');
+      }
+    } catch (error) {
+      // Revert on error
+      await fetchAssets();
+      if (import.meta.env.DEV) {
+        console.error('Error approving asset:', error);
+      }
+      alert(`Failed to approve asset: ${error.message}`);
+    }
+  };
+
+  const handleRejectClick = (assetId) => {
+    setAssetToReject(assetId);
+    setRejectReason('');
+    setRejectDialogOpen(true);
+  };
+
+  const handleRejectConfirm = async () => {
+    if (!assetToReject) return;
+    if (!rejectReason.trim()) {
+      alert('Please provide a reason for rejection');
+      return;
+    }
+    
+    setRejectDialogOpen(false);
+    
+    // Optimistic update
+    const asset = allAssets.find(a => a.id === assetToReject);
+    if (asset) {
+      const updatedAsset = {
+        ...asset,
+        operational_metadata: {
+          ...asset.operational_metadata,
+          approval_status: 'rejected',
+          rejected_at: new Date().toISOString(),
+          rejection_reason: rejectReason
+        }
+      };
+      setAllAssets(prev => prev.map(a => a.id === assetToReject ? updatedAsset : a));
+      setAssets(prev => prev.map(a => a.id === assetToReject ? updatedAsset : a));
+    }
+    
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/assets/${assetToReject}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reason: rejectReason }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        await fetchAssets();
+      } else {
+        await fetchAssets();
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to reject asset');
+      }
+    } catch (error) {
+      await fetchAssets();
+      if (import.meta.env.DEV) {
+        console.error('Error rejecting asset:', error);
+      }
+      alert(`Failed to reject asset: ${error.message}`);
+    } finally {
+      setAssetToReject(null);
+      setRejectReason('');
+    }
+  };
+
+  const handlePublishAsset = async (assetId) => {
+    // Optimistic update
+    const asset = allAssets.find(a => a.id === assetId);
+    if (asset) {
+      const updatedAsset = {
+        ...asset,
+        operational_metadata: {
+          ...asset.operational_metadata,
+          publish_status: 'published',
+          published_at: new Date().toISOString()
+        }
+      };
+      setAllAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+      setAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+    }
+    
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/assets/${assetId}/publish`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ published_to: 'catalog' }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        await fetchAssets();
+      } else {
+        await fetchAssets();
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to publish asset');
+      }
+    } catch (error) {
+      await fetchAssets();
+      if (import.meta.env.DEV) {
+        console.error('Error publishing asset:', error);
+      }
+      alert(`Failed to publish asset: ${error.message}`);
+    }
   };
 
   const handleViewAsset = async (assetId) => {
     
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets`);
       if (response.ok) {
         const allAssetsData = await response.json();
@@ -192,7 +426,7 @@ const AssetsPage = () => {
     if (!selectedAsset) return;
     setSavingMetadata(true);
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8099';
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       const response = await fetch(`${API_BASE_URL}/api/assets/${selectedAsset.id}`, {
         method: 'PUT',
         headers: {
@@ -260,6 +494,34 @@ const AssetsPage = () => {
     setCurrentPage(0); 
   };
 
+  const handleApprovalStatusFilterChange = (event) => {
+    setApprovalStatusFilter(event.target.value);
+    setCurrentPage(0);
+  };
+
+  const handleDiscoveryIdSearchChange = (event) => {
+    setDiscoveryIdSearch(event.target.value);
+    setCurrentPage(0);
+  };
+
+  const handleViewDiscoveryDetails = async (discoveryId) => {
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${API_BASE_URL}/api/discovery/${discoveryId}`);
+      if (response.ok) {
+        const discoveryData = await response.json();
+        setDiscoveryDetails(discoveryData);
+        setDiscoveryDetailsOpen(true);
+      } else {
+        const errorData = await response.json();
+        alert(`Error: ${errorData.error || 'Failed to fetch discovery details'}`);
+      }
+    } catch (error) {
+      console.error('Error fetching discovery details:', error);
+      alert('Failed to fetch discovery details');
+    }
+  };
+
   const formatBytes = (bytes) => {
     if (!bytes) return '0 Bytes';
     const k = 1024;
@@ -283,8 +545,34 @@ const AssetsPage = () => {
           <Button
             variant="outlined"
             startIcon={<Refresh />}
-            onClick={() => {
-              fetchAssets();
+            onClick={async () => {
+              try {
+                const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+                // Trigger Airflow DAG first
+                const triggerResponse = await fetch(`${API_BASE_URL}/api/discovery/trigger`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({})
+                });
+                
+                if (triggerResponse.ok) {
+                  const triggerData = await triggerResponse.json();
+                  if (import.meta.env.DEV) {
+                    console.log('Airflow DAG triggered:', triggerData);
+                  }
+                } else {
+                  console.warn('Failed to trigger Airflow DAG, refreshing assets anyway');
+                }
+                
+                // Then refresh assets
+                await fetchAssets();
+              } catch (error) {
+                console.error('Error refreshing:', error);
+                // Still try to fetch assets even if trigger fails
+                await fetchAssets();
+              }
             }}
             disabled={loading}
           >
@@ -296,7 +584,7 @@ const AssetsPage = () => {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} md={2}>
                 <TextField
                   fullWidth
                   placeholder="Search assets..."
@@ -311,13 +599,38 @@ const AssetsPage = () => {
                   }}
                 />
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid item xs={12} md={2}>
+                <TextField
+                  fullWidth
+                  placeholder="Search by Discovery ID..."
+                  value={discoveryIdSearch}
+                  onChange={handleDiscoveryIdSearchChange}
+                  type="number"
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Search />
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+            </Grid>
+            <Grid item xs={12} md={2}>
               <FormControl fullWidth>
-                <InputLabel>Type</InputLabel>
+                <InputLabel id="type-filter-label" shrink>Type</InputLabel>
                 <Select
+                  labelId="type-filter-label"
                   value={typeFilter}
                   label="Type"
                   onChange={handleTypeFilterChange}
+                  displayEmpty
+                  notched
+                  renderValue={(selected) => {
+                    if (selected === '' || !selected) {
+                      return 'All Types';
+                    }
+                    return selected;
+                  }}
                 >
                   <MenuItem value="">All Types</MenuItem>
                   {uniqueTypes.map(type => (
@@ -326,18 +639,54 @@ const AssetsPage = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid item xs={12} md={2.5}>
               <FormControl fullWidth>
-                <InputLabel>Catalog</InputLabel>
+                <InputLabel id="catalog-filter-label" shrink>Catalog</InputLabel>
                 <Select
+                  labelId="catalog-filter-label"
                   value={catalogFilter}
                   label="Catalog"
                   onChange={handleCatalogFilterChange}
+                  displayEmpty
+                  notched
+                  renderValue={(selected) => {
+                    if (selected === '' || !selected) {
+                      return 'All Catalogs';
+                    }
+                    return selected;
+                  }}
                 >
                   <MenuItem value="">All Catalogs</MenuItem>
                   {uniqueCatalogs.map(catalog => (
                     <MenuItem key={catalog} value={catalog}>{catalog}</MenuItem>
                   ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={2.5}>
+              <FormControl fullWidth>
+                <InputLabel id="status-filter-label" shrink>Status</InputLabel>
+                <Select
+                  labelId="status-filter-label"
+                  value={approvalStatusFilter}
+                  label="Status"
+                  onChange={handleApprovalStatusFilterChange}
+                  displayEmpty
+                  notched
+                  renderValue={(selected) => {
+                    if (selected === '' || !selected) {
+                      return 'All Statuses';
+                    }
+                    if (selected === 'pending_review') {
+                      return 'Pending Review';
+                    }
+                    return selected.charAt(0).toUpperCase() + selected.slice(1);
+                  }}
+                >
+                  <MenuItem value="">All Statuses</MenuItem>
+                  <MenuItem value="pending_review">Pending Review</MenuItem>
+                  <MenuItem value="approved">Approved</MenuItem>
+                  <MenuItem value="rejected">Rejected</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -348,8 +697,10 @@ const AssetsPage = () => {
                 startIcon={<FilterList />}
                 onClick={() => {
                   setSearchTerm('');
+                  setDiscoveryIdSearch('');
                   setTypeFilter('');
                   setCatalogFilter('');
+                  setApprovalStatusFilter('');
                   setCurrentPage(0);
                 }}
               >
@@ -420,14 +771,77 @@ const AssetsPage = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="small"
-                        startIcon={<Visibility />}
-                        variant="outlined"
-                        onClick={() => handleViewAsset(asset.id)}
-                      >
-                        View
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                        <Button
+                          size="small"
+                          startIcon={<Visibility />}
+                          variant="outlined"
+                          onClick={() => handleViewAsset(asset.id)}
+                        >
+                          View
+                        </Button>
+                        {(asset.operational_metadata?.approval_status === 'pending_review' || 
+                          !asset.operational_metadata?.approval_status ||
+                          asset.operational_metadata?.approval_status === 'pending') && (
+                          <>
+                            <Button
+                              size="small"
+                              startIcon={<ThumbUp />}
+                              variant="contained"
+                              color="success"
+                              onClick={() => handleApproveAsset(asset.id)}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="small"
+                              startIcon={<ThumbDown />}
+                              variant="contained"
+                              color="error"
+                              onClick={() => handleRejectClick(asset.id)}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                        {asset.operational_metadata?.approval_status === 'approved' && (
+                          <>
+                          <Chip
+                            icon={<CheckCircle />}
+                            label="Approved"
+                            color="success"
+                            size="small"
+                          />
+                            {asset.operational_metadata?.publish_status !== 'published' && (
+                              <Button
+                                size="small"
+                                startIcon={<Publish />}
+                                variant="contained"
+                                color="primary"
+                                onClick={() => handlePublishAsset(asset.id)}
+                              >
+                                Publish
+                              </Button>
+                            )}
+                          </>
+                        )}
+                        {asset.operational_metadata?.approval_status === 'rejected' && (
+                          <Chip
+                            icon={<Close />}
+                            label="Rejected"
+                            color="error"
+                            size="small"
+                          />
+                        )}
+                        {asset.operational_metadata?.publish_status === 'published' && (
+                          <Chip
+                            icon={<Publish />}
+                            label="Published"
+                            color="info"
+                            size="small"
+                          />
+                        )}
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -518,13 +932,40 @@ const AssetsPage = () => {
                     
                     const technicalMetadata = selectedAsset?.technical_metadata || {};
                     const safeAssetId = technicalMetadata.asset_id || selectedAsset?.id || 'N/A';
-                    const safeAssetType = technicalMetadata.asset_type || selectedAsset?.type || 'Unknown';
                     const safeLocation = technicalMetadata.location || 'N/A';
-                    const safeFormat = technicalMetadata.format || technicalMetadata.content_type || 'Unknown';
-                    const safeSizeBytes = technicalMetadata.size_bytes || 0;
+                    
+                    // Get Size - ensure it's properly fetched from Azure
+                    const safeSizeBytes = technicalMetadata.size_bytes || technicalMetadata.size || 0;
+                    
+                    // Get Format - try multiple sources
+                    let safeFormat = technicalMetadata.format;
+                    if (!safeFormat || safeFormat === 'unknown') {
+                        // Try to get from file extension
+                        const fileExt = technicalMetadata.file_extension;
+                        if (fileExt && fileExt !== 'N/A' && fileExt !== '') {
+                            safeFormat = fileExt.replace('.', '').toUpperCase();
+                        } else {
+                            // Try content type
+                            const contentType = technicalMetadata.content_type || '';
+                            if (contentType.includes('/')) {
+                                safeFormat = contentType.split('/')[1].toUpperCase();
+                            } else {
+                                safeFormat = contentType || 'UNKNOWN';
+                            }
+                        }
+                    }
+                    safeFormat = safeFormat.toUpperCase();
+                    
                     const safeNumRows = technicalMetadata.num_rows || 0;
                     const safeCreatedAt = technicalMetadata.created_at || selectedAsset?.discovered_at || new Date().toISOString();
+                    const safeLastModified = technicalMetadata.last_modified || safeCreatedAt;
                     const safeFileExtension = technicalMetadata.file_extension || 'N/A';
+                    
+                    // Azure-specific properties
+                    const blobType = technicalMetadata.blob_type || 'Block blob';
+                    const accessTier = technicalMetadata.access_tier || 'N/A';
+                    const etag = technicalMetadata.etag || 'N/A';
+                    const contentType = technicalMetadata.content_type || 'N/A';
                     
                     return (
                       <Grid container spacing={2}>
@@ -534,20 +975,22 @@ const AssetsPage = () => {
                               <Typography color="text.secondary" gutterBottom>
                                 Asset ID
                               </Typography>
-                              <Typography variant="body1" sx={{ wordBreak: 'break-all' }}>
+                              <Typography variant="body1" sx={{ wordBreak: 'break-all', fontSize: '0.875rem' }}>
                                 {safeAssetId}
                               </Typography>
                             </CardContent>
                           </Card>
                         </Grid>
+                        
+                        {/* Azure Properties - Required Fields */}
                         <Grid item xs={6}>
                           <Card variant="outlined">
                             <CardContent>
                               <Typography color="text.secondary" gutterBottom>
-                                Asset Type
+                                Last Modified
                               </Typography>
                               <Typography variant="body1">
-                                {safeAssetType}
+                                {new Date(safeLastModified).toLocaleString()}
                               </Typography>
                             </CardContent>
                           </Card>
@@ -556,10 +999,10 @@ const AssetsPage = () => {
                           <Card variant="outlined">
                             <CardContent>
                               <Typography color="text.secondary" gutterBottom>
-                                Location
+                                Creation Time
                               </Typography>
                               <Typography variant="body1">
-                                {safeLocation}
+                                {new Date(safeCreatedAt).toLocaleString()}
                               </Typography>
                             </CardContent>
                           </Card>
@@ -568,10 +1011,10 @@ const AssetsPage = () => {
                           <Card variant="outlined">
                             <CardContent>
                               <Typography color="text.secondary" gutterBottom>
-                                Format
+                                Type
                               </Typography>
                               <Typography variant="body1">
-                                {safeFormat}
+                                {blobType}
                               </Typography>
                             </CardContent>
                           </Card>
@@ -592,54 +1035,93 @@ const AssetsPage = () => {
                           <Card variant="outlined">
                             <CardContent>
                               <Typography color="text.secondary" gutterBottom>
-                                Number of Rows
+                                Format
                               </Typography>
                               <Typography variant="body1">
-                                {formatNumber(safeNumRows)}
-                                  </Typography>
-                                </CardContent>
-                              </Card>
-                            </Grid>
-                            {safeFileExtension !== 'N/A' && (
-                              <Grid item xs={6}>
-                                <Card variant="outlined">
-                                  <CardContent>
-                                    <Typography color="text.secondary" gutterBottom>
-                                      File Extension
-                                    </Typography>
-                                    <Typography variant="body1">
-                                      .{safeFileExtension}
-                                    </Typography>
-                                  </CardContent>
-                                </Card>
-                              </Grid>
-                            )}
-                            {technicalMetadata.content_type && (
-                              <Grid item xs={6}>
-                                <Card variant="outlined">
-                                  <CardContent>
-                                    <Typography color="text.secondary" gutterBottom>
-                                      Content Type (MIME)
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
-                                      {technicalMetadata.content_type}
-                                    </Typography>
-                                  </CardContent>
-                                </Card>
-                              </Grid>
-                        )}
-                        <Grid item xs={12}>
-                          <Card variant="outlined">
-                            <CardContent>
-                              <Typography color="text.secondary" gutterBottom>
-                                Created At
-                              </Typography>
-                              <Typography variant="body1">
-                                {new Date(safeCreatedAt).toLocaleString()}
+                                {safeFormat}
                               </Typography>
                             </CardContent>
                           </Card>
                         </Grid>
+                        <Grid item xs={6}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Typography color="text.secondary" gutterBottom>
+                                Access Tier
+                              </Typography>
+                              <Typography variant="body1">
+                                {accessTier}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Typography color="text.secondary" gutterBottom>
+                                ETAG
+                              </Typography>
+                              <Typography variant="body1" sx={{ fontSize: '0.875rem', wordBreak: 'break-all' }}>
+                                {etag}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Typography color="text.secondary" gutterBottom>
+                                Content Type
+                              </Typography>
+                              <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
+                                {contentType}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                        
+                        {/* Additional Properties */}
+                        <Grid item xs={6}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Typography color="text.secondary" gutterBottom>
+                                Location
+                              </Typography>
+                              <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
+                                {safeLocation}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                        {safeNumRows > 0 && (
+                          <Grid item xs={6}>
+                            <Card variant="outlined">
+                              <CardContent>
+                                <Typography color="text.secondary" gutterBottom>
+                                  Number of Rows
+                                </Typography>
+                                <Typography variant="body1">
+                                  {formatNumber(safeNumRows)}
+                                </Typography>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        )}
+                        {safeFileExtension !== 'N/A' && (
+                          <Grid item xs={6}>
+                            <Card variant="outlined">
+                              <CardContent>
+                                <Typography color="text.secondary" gutterBottom>
+                                  File Extension
+                                </Typography>
+                                <Typography variant="body1">
+                                  {safeFileExtension}
+                                </Typography>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        )}
+                        
                       </Grid>
                     );
                   })()}
@@ -986,7 +1468,7 @@ const AssetsPage = () => {
                                       {column.pii_detected ? (
                                         <Chip 
                                           icon={<Warning />}
-                                          label={`PII: ${column.pii_type || 'Unknown'}`} 
+                                          label={`PII: ${(column.pii_types && column.pii_types.length > 0) ? column.pii_types.join(', ') : 'Unknown'}`} 
                                           color="error" 
                                           size="small"
                                         />
@@ -1045,6 +1527,123 @@ const AssetsPage = () => {
             </DialogActions>
           </>
         )}
+      </Dialog>
+
+      {/* Rejection Reason Dialog */}
+      <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Reject Asset</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Please provide a reason for rejecting this asset:
+          </Typography>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Rejection Reason"
+            fullWidth
+            multiline
+            rows={4}
+            variant="outlined"
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Enter the reason for rejection..."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setRejectDialogOpen(false);
+            setRejectReason('');
+            setAssetToReject(null);
+          }}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleRejectConfirm} 
+            variant="contained" 
+            color="error"
+            disabled={!rejectReason.trim()}
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Discovery Details Dialog */}
+      <Dialog open={discoveryDetailsOpen} onClose={() => setDiscoveryDetailsOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Discovery Details</DialogTitle>
+        <DialogContent>
+          {discoveryDetails && (
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary">Discovery ID</Typography>
+                  <Typography variant="body1" sx={{ fontWeight: 600 }}>#{discoveryDetails.discovery_id}</Typography>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary">Status</Typography>
+                  <Chip 
+                    label={discoveryDetails.status || 'N/A'} 
+                    size="small" 
+                    color={discoveryDetails.status === 'approved' ? 'success' : discoveryDetails.status === 'rejected' ? 'error' : 'default'}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary">Approval Status</Typography>
+                  <Chip 
+                    label={discoveryDetails.approval_status || 'N/A'} 
+                    size="small" 
+                    color={discoveryDetails.approval_status === 'approved' ? 'success' : discoveryDetails.approval_status === 'rejected' ? 'error' : 'default'}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary">Asset ID</Typography>
+                  <Typography variant="body2">{discoveryDetails.asset_id || 'N/A'}</Typography>
+                </Grid>
+                {discoveryDetails.asset && (
+                  <>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="subtitle2" color="text.secondary">Asset Name</Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>{discoveryDetails.asset.name}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="subtitle2" color="text.secondary">Asset Type</Typography>
+                      <Typography variant="body2">{discoveryDetails.asset.type}</Typography>
+                    </Grid>
+                  </>
+                )}
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary">Discovered At</Typography>
+                  <Typography variant="body2">
+                    {discoveryDetails.discovered_at ? new Date(discoveryDetails.discovered_at).toLocaleString() : 'N/A'}
+                  </Typography>
+                </Grid>
+                {discoveryDetails.published_at && (
+                  <Grid item xs={12} sm={6}>
+                    <Typography variant="subtitle2" color="text.secondary">Published At</Typography>
+                    <Typography variant="body2">
+                      {new Date(discoveryDetails.published_at).toLocaleString()}
+                    </Typography>
+                  </Grid>
+                )}
+                {discoveryDetails.approval_workflow && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Approval Workflow</Typography>
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Typography variant="body2" component="pre" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                        {JSON.stringify(discoveryDetails.approval_workflow, null, 2)}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                )}
+              </Grid>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDiscoveryDetailsOpen(false)} variant="outlined">
+            Close
+          </Button>
+        </DialogActions>
       </Dialog>
 
     </Box>

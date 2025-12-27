@@ -1,8 +1,12 @@
 
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# Load .env from backend directory
+backend_dir = Path(__file__).parent
+env_path = backend_dir / '.env'
+load_dotenv(env_path)
 
 class Config:
     
