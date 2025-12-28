@@ -17,25 +17,30 @@ def _get_asset_model():
     global Asset
     if Asset is None:
         try:
-            # Try relative import first (works when imported as a module)
-            from ..models import Asset as AssetModel
-            Asset = AssetModel
-        except (ImportError, ValueError):
-            # Try absolute import
-            try:
-                backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                if backend_path not in sys.path:
-                    sys.path.insert(0, backend_path)
-                from ..models import Asset as AssetModel
-                Asset = AssetModel
-            except ImportError:
-                # Last resort: import from backend package
-                import importlib.util
-                models_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models.py')
+            # Try direct import from models (works when running directly)
+            import importlib.util
+            backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            models_path = os.path.join(backend_path, 'models.py')
+            if os.path.exists(models_path):
                 spec = importlib.util.spec_from_file_location("models", models_path)
                 models_module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(models_module)
                 Asset = models_module.Asset
+            else:
+                # Fallback: try relative import
+                from models import Asset as AssetModel
+                Asset = AssetModel
+        except (ImportError, ValueError, Exception) as e:
+            # Last resort: try importing from current directory
+            try:
+                backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if backend_path not in sys.path:
+                    sys.path.insert(0, backend_path)
+                from models import Asset as AssetModel
+                Asset = AssetModel
+            except ImportError:
+                logger.error(f'FN:_get_asset_model error:Could not import Asset model error:{str(e)}')
+                raise
     return Asset
 
 logger = logging.getLogger(__name__)

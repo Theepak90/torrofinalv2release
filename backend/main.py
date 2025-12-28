@@ -1517,7 +1517,16 @@ def discover_assets(connection_id):
                             thread_db = SessionLocal()
                             try:
                                 # Check if asset already exists (deduplication)
-                                existing_asset = check_asset_exists(thread_db, connector_id, blob_path) if AZURE_AVAILABLE else None
+                                existing_asset = None
+                                if AZURE_AVAILABLE:
+                                    try:
+                                        existing_asset = check_asset_exists(thread_db, connector_id, blob_path)
+                                        if existing_asset:
+                                            logger.debug('FN:discover_assets blob_path:{} existing_asset_id:{} message:Found existing asset for deduplication'.format(blob_path, existing_asset.id))
+                                    except Exception as e:
+                                        logger.error('FN:discover_assets blob_path:{} error:check_asset_exists failed error:{}'.format(blob_path, str(e)))
+                                        # Continue without deduplication if check fails (shouldn't happen, but be safe)
+                                        existing_asset = None
                                 
                                 # Get full blob properties from Azure for complete metadata
                                 # This ensures we have all metadata for every file in the datalake
@@ -1637,8 +1646,10 @@ def discover_assets(connection_id):
                                         "thread_db": thread_db
                                     }
                                 else:
-                                    # Create new asset
-                                    asset_id = f"azure_blob_{connection.name}_{blob_path.replace('/', '_').replace(' ', '_')}_{int(datetime.now().timestamp())}"
+                                    # Create new asset - use consistent ID without timestamp for deduplication
+                                    # Normalize blob_path for ID generation (remove leading/trailing slashes)
+                                    normalized_path = blob_path.strip('/').replace('/', '_').replace(' ', '_')
+                                    asset_id = f"azure_blob_{connection.name}_{normalized_path}"
                                     
                                     # Build all metadata from Azure properties
                                     technical_meta = build_technical_metadata(
@@ -1804,19 +1815,55 @@ def discover_assets(connection_id):
                         elif item.get("action") == "created":
                             # New asset to create
                             asset_data = item["asset_data"]
-                            asset = Asset(
-                                id=asset_data['id'],
-                                name=asset_data['name'],
-                                type=asset_data['type'],
-                                catalog=asset_data['catalog'],
-                                connector_id=asset_data['connector_id'],
-                                technical_metadata=asset_data['technical_metadata'],
-                                operational_metadata=asset_data['operational_metadata'],
-                                business_metadata=asset_data['business_metadata'],
-                                columns=asset_data['columns']
-                            )
-                            db.add(asset)
-                            db.flush()  # Flush to get asset ID before creating discovery record
+                            try:
+                                asset = Asset(
+                                    id=asset_data['id'],
+                                    name=asset_data['name'],
+                                    type=asset_data['type'],
+                                    catalog=asset_data['catalog'],
+                                    connector_id=asset_data['connector_id'],
+                                    technical_metadata=asset_data['technical_metadata'],
+                                    operational_metadata=asset_data['operational_metadata'],
+                                    business_metadata=asset_data['business_metadata'],
+                                    columns=asset_data['columns']
+                                )
+                                db.add(asset)
+                                db.flush()  # Flush to get asset ID before creating discovery record
+                            except Exception as flush_error:
+                                # Handle race condition: another thread may have created this asset
+                                error_str = str(flush_error)
+                                if "Duplicate entry" in error_str or "1062" in error_str or "UNIQUE constraint" in error_str or "IntegrityError" in error_str:
+                                    # Asset already exists (race condition from concurrent processing)
+                                    db.rollback()
+                                    # Query for existing asset
+                                    existing_asset = db.query(Asset).filter(Asset.id == asset_data['id']).first()
+                                    if existing_asset:
+                                        logger.debug('FN:discover_assets asset_id:{} message:Asset already exists (race condition), skipping duplicate creation'.format(asset_data['id']))
+                                        skipped_count += 1
+                                        continue
+                                    else:
+                                        # Rollback cleared it, retry once
+                                        try:
+                                            asset = Asset(
+                                                id=asset_data['id'],
+                                                name=asset_data['name'],
+                                                type=asset_data['type'],
+                                                catalog=asset_data['catalog'],
+                                                connector_id=asset_data['connector_id'],
+                                                technical_metadata=asset_data['technical_metadata'],
+                                                operational_metadata=asset_data['operational_metadata'],
+                                                business_metadata=asset_data['business_metadata'],
+                                                columns=asset_data['columns']
+                                            )
+                                            db.add(asset)
+                                            db.flush()
+                                        except Exception as retry_error:
+                                            logger.warning('FN:discover_assets asset_id:{} message:Retry failed, skipping error:{}'.format(asset_data['id'], str(retry_error)))
+                                            skipped_count += 1
+                                            continue
+                                else:
+                                    # Different error, re-raise
+                                    raise
                             
                             # Create discovery record with sequential ID (auto-increment)
                             # Extract storage location from technical metadata
@@ -2141,7 +2188,8 @@ def discover_assets(connection_id):
                         
                         # Build asset data
                         storage_location_str = f"table://{table_name}"
-                        asset_id = f"{connector_id}_{table_name}_{int(datetime.utcnow().timestamp())}"
+                        # Use consistent ID format (without timestamp to avoid duplicates on refresh)
+                        asset_id = f"azure_table_{connection.name}_{table_name}"
                         
                         asset_data = {
                             "id": asset_id,
