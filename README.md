@@ -441,24 +441,25 @@ pkill -f "vite"
 
 ### Option 2: Manual Start (Development)
 
-**⚠️ IMPORTANT: Always activate the virtual environment before running Python scripts!**
-
 **Terminal 1 - Backend:**
+
+**Option A: With virtual environment (RECOMMENDED):**
 ```bash
 cd backend
-
-# CRITICAL: Activate virtual environment first!
 source venv/bin/activate  # On Linux/Mac
 # OR: venv\Scripts\activate  # On Windows
-
-# Verify venv is active (prompt should show (venv))
-# Then run:
 python main.py
 ```
 
-**If you get `ModuleNotFoundError: No module named 'flask'`:**
-- You forgot to activate the virtual environment!
-- Run `source venv/bin/activate` first, then try again
+**Option B: Without virtual environment (if dependencies installed globally):**
+```bash
+cd backend
+python3 main.py
+```
+
+**Note:** If you get `ModuleNotFoundError: No module named 'flask'`:
+- **With venv**: Make sure you activated it (`source venv/bin/activate`)
+- **Without venv**: Install dependencies globally: `pip3 install -r requirements.txt` (not recommended for production)
 
 **Terminal 2 - Airflow Webserver:**
 ```bash

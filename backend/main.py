@@ -1,25 +1,31 @@
 import sys
 import os
 
-# Check if running in virtual environment or if dependencies are installed
+# Check if dependencies are installed (works with or without venv)
 try:
     import flask
 except ImportError:
     print("=" * 70)
     print("ERROR: Flask is not installed!")
     print("=" * 70)
-    print("You must activate the virtual environment before running main.py:")
+    print("You have two options:")
     print("")
+    print("Option 1: Use virtual environment (RECOMMENDED):")
     print("  cd backend")
     print("  source venv/bin/activate  # On Linux/Mac")
     print("  # OR: venv\\Scripts\\activate  # On Windows")
     print("  python main.py")
     print("")
-    print("If venv doesn't exist, create it first:")
-    print("  cd backend")
+    print("  If venv doesn't exist, create it first:")
     print("  python3 -m venv venv")
     print("  source venv/bin/activate")
     print("  pip install -r requirements.txt")
+    print("")
+    print("Option 2: Install dependencies globally (NOT RECOMMENDED):")
+    print("  cd backend")
+    print("  pip3 install -r requirements.txt")
+    print("  python3 main.py")
+    print("")
     print("=" * 70)
     sys.exit(1)
 
