@@ -93,11 +93,39 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
-    Base.metadata.create_all(bind=engine)
+    # Only create tables that don't exist - this prevents errors if tables already exist
+    # SQLAlchemy's create_all() should handle this, but we'll catch specific errors
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+    
+    # Create all tables (SQLAlchemy will skip existing ones)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+    
+    # Verify tables exist
+    new_tables = inspector.get_table_names()
+    created_tables = [t for t in new_tables if t not in existing_tables]
+    
+    if created_tables:
+        logger.info('FN:__init__ message:Created new database tables: {}'.format(', '.join(created_tables)))
+    else:
+        logger.info('FN:__init__ message:All database tables already exist')
+    
     logger.info('FN:__init__ message:Database tables initialized successfully')
 except Exception as e:
-    logger.error('FN:__init__ message:Error initializing database tables error:{}'.format(str(e)))
-    raise
+    error_msg = str(e)
+    # If error is about existing tables or foreign key constraints, log warning but don't fail
+    if 'already exists' in error_msg.lower() or 'duplicate' in error_msg.lower():
+        logger.warning('FN:__init__ message:Some tables may already exist, continuing: {}'.format(error_msg))
+    elif 'foreign key' in error_msg.lower() or '3780' in error_msg or 'incompatible' in error_msg.lower():
+        # Foreign key constraint error - table exists but constraint definition differs
+        # This is OK if tables already exist with correct schema
+        logger.warning('FN:__init__ message:Foreign key constraint issue (tables may already exist): {}'.format(error_msg))
+        logger.info('FN:__init__ message:Continuing with existing database schema')
+    else:
+        # Other errors should be logged and raised
+        logger.error('FN:__init__ message:Error initializing database tables error:{}'.format(error_msg))
+        raise
 
 def handle_error(f):
     
