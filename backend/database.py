@@ -29,7 +29,8 @@ except ImportError:
     env_path = backend_dir / '.env'
     load_dotenv(env_path)
     
-    DB_HOST = os.getenv("DB_HOST", "localhost")
+    # DB_HOST should be set in .env file (no default to force explicit configuration)
+    DB_HOST = os.getenv("DB_HOST", "")
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_USER = os.getenv("DB_USER", "root")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
@@ -37,6 +38,10 @@ except ImportError:
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "75"))
     DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "75"))
     DB_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    
+    # Validate required database configuration
+    if not DB_HOST:
+        raise ValueError("DB_HOST must be set in backend/.env file. Cannot use default 'localhost'.")
 
 DB_DRIVER = os.getenv("DB_DRIVER", "pymysql")
 

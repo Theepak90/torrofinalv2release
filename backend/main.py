@@ -755,7 +755,9 @@ def trigger_discovery():
                 note += f" for connection_id: {connection_id}"
             
             # Set AIRFLOW_HOME and use CLI to trigger DAG
-            airflow_home = app.config.get("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
+            # Use relative path: airflow directory is sibling to backend directory
+            default_airflow_home = os.path.join(os.path.dirname(os.path.dirname(__file__)), "airflow")
+            airflow_home = app.config.get("AIRFLOW_HOME", default_airflow_home)
             airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
             env = os_module.environ.copy()
             env["AIRFLOW_HOME"] = airflow_home
@@ -1120,7 +1122,9 @@ def test_connection(connection_id):
                     import os as os_module
                     
                     # Set AIRFLOW_HOME and use CLI to trigger DAG
-                    airflow_home = app.config.get("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
+                    # Use relative path: airflow directory is sibling to backend directory
+                    default_airflow_home = os.path.join(os.path.dirname(os.path.dirname(__file__)), "airflow")
+                    airflow_home = app.config.get("AIRFLOW_HOME", default_airflow_home)
                     airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
                     env = os_module.environ.copy()
                     env["AIRFLOW_HOME"] = airflow_home

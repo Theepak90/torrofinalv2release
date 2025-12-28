@@ -35,7 +35,7 @@ try:
     
     # Get DB config from environment
     DB_CONFIG = {
-        'host': os_module.getenv('DB_HOST', 'localhost'),
+        'host': os_module.getenv('DB_HOST', ''),
         'port': int(os_module.getenv('DB_PORT', 3306)),
         'user': os_module.getenv('DB_USER', 'root'),
         'password': os_module.getenv('DB_PASSWORD', ''),

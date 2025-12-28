@@ -162,6 +162,24 @@ mysql -u root -p torroforexcel < database/lineage_schema.sql
 mysql -u root -p torroforexcel -e "SHOW TABLES;"
 ```
 
+#### Database Storage Overview
+
+All application data is stored in the `torroforexcel` database. This includes:
+
+**Application Tables (6 tables):**
+- `assets` - Discovered data assets (files, tables, queues, file shares, etc.)
+- `connections` - Azure Storage connection configurations (connection strings, service principals)
+- `data_discovery` - Discovery run records, metadata, and status tracking
+- `lineage_relationships` - Data lineage connections between assets
+- `lineage_history` - History of lineage changes and updates
+- `sql_queries` - SQL query metadata for lineage extraction
+
+**Airflow Metadata:**
+- Airflow's internal metadata (DAGs, task instances, runs, logs) is also stored in `torroforexcel`
+- Configured via `airflow.cfg`: `sql_alchemy_conn = mysql+pymysql://...torroforexcel`
+
+**Note:** The database name `torroforexcel` is the original project name and is used throughout the codebase. All components (Backend, Airflow, Frontend) use this single database for centralized data storage.
+
 ### Step 4: Backend Setup
 
 ```bash

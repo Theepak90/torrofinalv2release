@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from config import config
     DB_CONFIG = {
-        'host': config.get('DB_HOST', 'localhost'),
+        'host': config.get('DB_HOST', ''),
         'port': int(config.get('DB_PORT', 3306)),
         'user': config.get('DB_USER', 'root'),
         'password': config.get('DB_PASSWORD', ''),
@@ -30,7 +30,7 @@ except ImportError:
     load_dotenv(env_path)
     
     DB_CONFIG = {
-        'host': os.getenv('DB_HOST', 'localhost'),
+        'host': os.getenv('DB_HOST', ''),
         'port': int(os.getenv('DB_PORT', 3306)),
         'user': os.getenv('DB_USER', 'root'),
         'password': os.getenv('DB_PASSWORD', ''),
