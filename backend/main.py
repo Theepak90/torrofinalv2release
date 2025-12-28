@@ -381,13 +381,23 @@ def get_assets():
                 return jsonify({"error": "No asset linked to this discovery_id"}), 404
         
         # Get all assets with their discovery_id, sorted by discovery_id
-        # Join with data_discovery to sort by discovery_id
-        from sqlalchemy import case
+        # Use DISTINCT to avoid duplicates when an asset has multiple discovery records
+        from sqlalchemy import case, func
         
-        # Query assets with discovery records, sorted by discovery_id
-        # Use CASE to put NULL discovery_ids at the end
+        # Get the latest discovery_id for each asset (to avoid duplicates)
+        # Subquery to get max discovery_id per asset
+        latest_discovery_subq = db.query(
+            DataDiscovery.asset_id,
+            func.max(DataDiscovery.id).label('latest_discovery_id')
+        ).filter(
+            DataDiscovery.asset_id.isnot(None)
+        ).group_by(DataDiscovery.asset_id).subquery()
+        
+        # Query assets with their latest discovery record
         assets_with_discovery = db.query(Asset, DataDiscovery).outerjoin(
-            DataDiscovery, Asset.id == DataDiscovery.asset_id
+            latest_discovery_subq, Asset.id == latest_discovery_subq.c.asset_id
+        ).outerjoin(
+            DataDiscovery, DataDiscovery.id == latest_discovery_subq.c.latest_discovery_id
         ).order_by(
             case((DataDiscovery.id.is_(None), 1), else_=0),  # Put NULLs last
             DataDiscovery.id.asc(),  # Sort by discovery_id ascending
@@ -395,7 +405,12 @@ def get_assets():
         ).all()
         
         result = []
+        seen_asset_ids = set()  # Track unique assets to avoid duplicates
         for asset, discovery in assets_with_discovery:
+            # Skip if we've already added this asset (safety check)
+            if asset.id in seen_asset_ids:
+                continue
+            seen_asset_ids.add(asset.id)
             asset_data = {
             "id": asset.id,
             "name": asset.name,
