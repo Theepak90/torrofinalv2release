@@ -24,10 +24,15 @@ def retry_db_operation(max_retries: int = None, base_delay: float = 1.0, max_del
         max_delay: Maximum delay between retries (caps exponential backoff)
         max_total_time: Maximum total time to spend retrying (safety timeout in seconds)
     """
-    # Get retry config from environment or use defaults
+    # Get retry config from config or use defaults
     if max_retries is None:
-        env_value = os.getenv("DB_RETRY_MAX_ATTEMPTS", "20")
-        max_retries = int(env_value) if env_value else 20
+        # Import config here to avoid circular imports
+        import sys
+        airflow_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if airflow_dir not in sys.path:
+            sys.path.insert(0, airflow_dir)
+        from config import config
+        max_retries = config.DB_RETRY_MAX_ATTEMPTS
         # 0 means unlimited retries (only limited by max_total_time)
         if max_retries == 0:
             max_retries = -1  # Use -1 internally to represent unlimited

@@ -1,17 +1,19 @@
 import os
+import sys
 import logging
 from typing import Dict, List, Optional
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.textanalytics import TextAnalyticsClient
-from dotenv import load_dotenv
 
-load_dotenv()
+# Import centralized config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import config
 
 logger = logging.getLogger(__name__)
 
-# Azure AI Language (PII Detection) configuration
-AZURE_AI_LANGUAGE_ENDPOINT = os.getenv("AZURE_AI_LANGUAGE_ENDPOINT", "")
-AZURE_AI_LANGUAGE_KEY = os.getenv("AZURE_AI_LANGUAGE_KEY", "")
+# Azure AI Language (PII Detection) configuration - use centralized config
+AZURE_AI_LANGUAGE_ENDPOINT = config.AZURE_AI_LANGUAGE_ENDPOINT
+AZURE_AI_LANGUAGE_KEY = config.AZURE_AI_LANGUAGE_KEY
 
 
 class AzureDLPClient:

@@ -13,17 +13,14 @@ import json
 import pymysql
 import sys
 
+# Import centralized config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import config
+
 logger = logging.getLogger(__name__)
 
-# Database configuration - use environment variables
-DB_CONFIG = {
-    "host": os.getenv("MYSQL_HOST", "localhost"),
-    "port": int(os.getenv("MYSQL_PORT", "3306")),
-    "user": os.getenv("MYSQL_USER", "root"),
-    "password": os.getenv("MYSQL_PASSWORD", ""),
-    "database": os.getenv("MYSQL_DATABASE", "torroforexcel"),
-    "charset": "utf8mb4"
-}
+# Database configuration - use centralized config
+DB_CONFIG = config.DB_CONFIG
 
 
 def extract_sql_from_dag_file(file_path: str) -> List[Dict]:

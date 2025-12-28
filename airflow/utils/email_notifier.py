@@ -108,7 +108,9 @@ def send_notification_email(discoveries: List[Dict], recipients: List[str]):
                 </tr>
         """
         
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5162")
+        # Import config for FRONTEND_URL
+        from config import config
+        frontend_url = config.FRONTEND_URL
         
         for discovery in discoveries:
             discovery_id = discovery["id"]

@@ -17,6 +17,10 @@ if airflow_dir not in sys.path:
 if os.getcwd() not in sys.path:
     sys.path.insert(0, os.getcwd())
 
+# Import centralized config
+from config import config as airflow_config
+# Import centralized config
+from config import config as airflow_config
 from config.azure_config import (
     AZURE_STORAGE_ACCOUNTS,
     DB_CONFIG,
@@ -42,10 +46,9 @@ def retry_db_operation(max_retries: int = None, base_delay: float = 1.0, max_del
         max_delay: Maximum delay between retries (caps exponential backoff)
         max_total_time: Maximum total time to spend retrying (safety timeout in seconds)
     """
-    # Get retry config from environment or use defaults
+    # Get retry config from config or use defaults
     if max_retries is None:
-        env_value = os.getenv("DB_RETRY_MAX_ATTEMPTS", "20")
-        max_retries = int(env_value) if env_value else 20
+        max_retries = airflow_config.DB_RETRY_MAX_ATTEMPTS
         # 0 means unlimited retries (only limited by max_total_time)
         if max_retries == 0:
             max_retries = -1  # Use -1 internally to represent unlimited
@@ -879,7 +882,7 @@ dag = DAG(
     default_args=default_args,
     description='Discover new files in Azure Blob Storage',
     # Run periodically, but avoid overlapping runs on large scans.
-    schedule_interval=os.getenv("AIRFLOW_DAG_SCHEDULE", "0 */2 * * *"),  # Default: every 2 hours (highest priority)
+    schedule_interval=airflow_config.AIRFLOW_DAG_SCHEDULE,  # From config (default: "0 * * * *")
     start_date=datetime(2024, 1, 1),
     catchup=False,
     # Allow scheduled runs to be created even if older manual runs are queued.

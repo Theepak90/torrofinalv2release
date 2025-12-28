@@ -9,9 +9,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Use absolute imports (works both as module and directly)
+# Import config first to ensure .env is loaded before other modules use it
+from config import config
 from database import engine, Base, SessionLocal
 from models import Asset, Connection, LineageRelationship, LineageHistory, SQLQuery, DataDiscovery
-from config import config
 import logging
 from logging.handlers import RotatingFileHandler
 from functools import wraps
@@ -706,7 +707,7 @@ def trigger_discovery():
         # Trigger Airflow DAG
         airflow_triggered = False
         try:
-            airflow_base_url = os.getenv("AIRFLOW_BASE_URL")
+            airflow_base_url = app.config.get("AIRFLOW_BASE_URL")
             if not airflow_base_url:
                 return jsonify({
                     "error": "AIRFLOW_BASE_URL not configured",
@@ -726,7 +727,7 @@ def trigger_discovery():
                 note += f" for connection_id: {connection_id}"
             
             # Set AIRFLOW_HOME and use CLI to trigger DAG
-            airflow_home = os.getenv("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
+            airflow_home = app.config.get("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
             airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
             env = os_module.environ.copy()
             env["AIRFLOW_HOME"] = airflow_home
@@ -1073,7 +1074,7 @@ def test_connection(connection_id):
                 airflow_triggered = False
                 try:
                     # Try to trigger Airflow DAG via REST API
-                    airflow_base_url = os.getenv("AIRFLOW_BASE_URL")
+                    airflow_base_url = app.config.get("AIRFLOW_BASE_URL")
                     if not airflow_base_url:
                         logger.warning('FN:test_connection AIRFLOW_BASE_URL not set, skipping Airflow trigger')
                         airflow_triggered = False
@@ -1091,7 +1092,7 @@ def test_connection(connection_id):
                     import os as os_module
                     
                     # Set AIRFLOW_HOME and use CLI to trigger DAG
-                    airflow_home = os.getenv("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
+                    airflow_home = app.config.get("AIRFLOW_HOME", "/mnt/torro/torrofinalv2release/airflow")
                     airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
                     env = os_module.environ.copy()
                     env["AIRFLOW_HOME"] = airflow_home
@@ -3208,9 +3209,8 @@ def internal_error(error):
         return jsonify({"error": "An internal server error occurred"}), 500
 
 if __name__ == '__main__':
-    port = int(os.getenv("FLASK_PORT", "8099"))
+    host = app.config.get("FLASK_HOST", "0.0.0.0")
+    port = app.config.get("FLASK_PORT", 8099)
     debug = app.config.get("DEBUG", False)
     logger.info('FN:__main__ port:{} environment:{} debug:{} message:Starting Flask app'.format(port, env, debug))
-    host = os.getenv("FLASK_HOST", "0.0.0.0")
-    port = int(os.getenv("FLASK_PORT", port))
     app.run(host=host, port=port, debug=debug)
