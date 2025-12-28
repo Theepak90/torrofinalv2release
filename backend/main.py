@@ -1,8 +1,31 @@
+import sys
+import os
+
+# Check if running in virtual environment or if dependencies are installed
+try:
+    import flask
+except ImportError:
+    print("=" * 70)
+    print("ERROR: Flask is not installed!")
+    print("=" * 70)
+    print("You must activate the virtual environment before running main.py:")
+    print("")
+    print("  cd backend")
+    print("  source venv/bin/activate  # On Linux/Mac")
+    print("  # OR: venv\\Scripts\\activate  # On Windows")
+    print("  python main.py")
+    print("")
+    print("If venv doesn't exist, create it first:")
+    print("  cd backend")
+    print("  python3 -m venv venv")
+    print("  source venv/bin/activate")
+    print("  pip install -r requirements.txt")
+    print("=" * 70)
+    sys.exit(1)
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sqlalchemy.orm.attributes import flag_modified
-import sys
-import os
 
 # Fix imports for running directly
 # Add current directory to path first
