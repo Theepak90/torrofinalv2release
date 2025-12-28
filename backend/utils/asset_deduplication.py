@@ -41,6 +41,16 @@ def _get_asset_model():
 logger = logging.getLogger(__name__)
 
 
+def normalize_path(path: str) -> str:
+    """Normalize storage path for comparison (remove leading/trailing slashes, normalize case)"""
+    if not path:
+        return ""
+    # Remove leading and trailing slashes, but keep internal ones
+    normalized = path.strip('/')
+    # Normalize to lowercase for case-insensitive comparison
+    return normalized.lower()
+
+
 def check_asset_exists(
     db: Session,
     connector_id: str,
@@ -59,17 +69,30 @@ def check_asset_exists(
     """
     try:
         Asset = _get_asset_model()
+        # Normalize the search path
+        normalized_search_path = normalize_path(storage_path)
+        
+        if not normalized_search_path:
+            logger.warning(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} message:Empty normalized path')
+            return None
+        
         # Look for assets with matching connector_id and storage path in technical_metadata
         assets = db.query(Asset).filter(
             Asset.connector_id == connector_id
         ).all()
         
-        # Check technical_metadata for matching location/path
+        # Check technical_metadata for matching location/path (normalized comparison)
         for asset in assets:
             tech_meta = asset.technical_metadata or {}
-            if tech_meta.get('location') == storage_path:
+            stored_location = tech_meta.get('location') or tech_meta.get('storage_path') or ""
+            normalized_stored = normalize_path(stored_location)
+            
+            # Exact match after normalization
+            if normalized_stored == normalized_search_path:
+                logger.debug(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} existing_asset_id:{asset.id} message:Found existing asset')
                 return asset
         
+        logger.debug(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} message:No existing asset found')
         return None
     except Exception as e:
         logger.error(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} error:{str(e)}')

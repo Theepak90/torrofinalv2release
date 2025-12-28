@@ -750,6 +750,7 @@ def create_assets():
 
         assets_data = data if isinstance(data, list) else [data]
         created_assets = []
+        skipped_assets = []
 
         for asset_data in assets_data:
             if not asset_data.get('id'):
@@ -758,6 +759,13 @@ def create_assets():
                 return jsonify({"error": "Asset name is required"}), 400
             if not asset_data.get('type'):
                 return jsonify({"error": "Asset type is required"}), 400
+
+            # Check if asset already exists (deduplication)
+            existing_asset = db.query(Asset).filter(Asset.id == asset_data['id']).first()
+            if existing_asset:
+                logger.warning('FN:create_assets asset_id:{} message:Asset already exists, skipping'.format(asset_data['id']))
+                skipped_assets.append(asset_data['id'])
+                continue
 
             asset = Asset(
                 id=asset_data['id'],
@@ -777,20 +785,26 @@ def create_assets():
         for asset in created_assets:
             db.refresh(asset)
 
-        logger.info('FN:create_assets created_count:{}'.format(len(created_assets)))
+        logger.info('FN:create_assets created_count:{} skipped_count:{}'.format(len(created_assets), len(skipped_assets)))
 
-        return jsonify([{
-            "id": asset.id,
-            "name": asset.name,
-            "type": asset.type,
-            "catalog": asset.catalog,
-            "connector_id": asset.connector_id,
-            "discovered_at": asset.discovered_at.isoformat() if asset.discovered_at else None,
-            "technical_metadata": asset.technical_metadata,
-            "operational_metadata": asset.operational_metadata,
-            "business_metadata": asset.business_metadata,
-            "columns": asset.columns
-        } for asset in created_assets]), 201
+        response_data = {
+            "created": [{
+                "id": asset.id,
+                "name": asset.name,
+                "type": asset.type,
+                "catalog": asset.catalog,
+                "connector_id": asset.connector_id,
+                "discovered_at": asset.discovered_at.isoformat() if asset.discovered_at else None,
+                "technical_metadata": asset.technical_metadata,
+                "operational_metadata": asset.operational_metadata,
+                "business_metadata": asset.business_metadata,
+                "columns": asset.columns
+            } for asset in created_assets],
+            "skipped": skipped_assets,
+            "message": f"Created {len(created_assets)} asset(s), skipped {len(skipped_assets)} duplicate(s)"
+        }
+        
+        return jsonify(response_data), 201
     except Exception as e:
         db.rollback()
         logger.error('FN:create_assets error:{}'.format(str(e)), exc_info=True)
@@ -1415,6 +1429,7 @@ def discover_assets(connection_id):
                 container_discovered_assets = []
                 container_folders_found = set()
                 container_assets_by_folder = {}
+                container_skipped_count = 0
                 
                 try:
                     logger.info('FN:discover_assets container_name:{} folder_path:{} message:Listing files'.format(container_name, folder_path))
@@ -1546,10 +1561,14 @@ def discover_assets(connection_id):
                                     schema_hash
                                 )
                                 
-                                # Skip if nothing changed
-                                if not should_update and existing_asset:
-                                    logger.debug('FN:discover_assets blob_path:{} message:Skipping unchanged asset'.format(blob_path))
-                                    return None
+                                # Skip if nothing changed OR if asset already exists and we shouldn't update
+                                if existing_asset:
+                                    if not should_update:
+                                        logger.info('FN:discover_assets blob_path:{} existing_asset_id:{} message:Skipping unchanged asset (deduplication)'.format(blob_path, existing_asset.id))
+                                        # Return None to indicate this asset was skipped (deduplication)
+                                        return None
+                                    else:
+                                        logger.info('FN:discover_assets blob_path:{} existing_asset_id:{} schema_changed:{} message:Updating existing asset'.format(blob_path, existing_asset.id, schema_changed))
                                 
                                 current_date = datetime.utcnow().isoformat()
                                 
@@ -1675,6 +1694,9 @@ def discover_assets(connection_id):
                                 result = future.result()
                                 if result:
                                     container_discovered_assets.append(result)
+                                elif result is None:
+                                    # Asset was skipped due to deduplication (already exists and unchanged)
+                                    container_skipped_count += 1
                             except Exception as e:
                                 blob_info = futures[future]
                                 logger.error('FN:discover_assets container_name:{} blob_name:{} error:{}'.format(container_name, blob_info.get('name', 'unknown'), str(e)), exc_info=True)
@@ -1682,15 +1704,20 @@ def discover_assets(connection_id):
                     return {
                         "discovered_assets": container_discovered_assets,
                         "folders_found": container_folders_found,
-                        "assets_by_folder": container_assets_by_folder
+                        "assets_by_folder": container_assets_by_folder,
+                        "skipped_count": container_skipped_count
                     }
                 except Exception as e:
                     logger.error('FN:discover_assets container_name:{} message:Error listing blobs error:{}'.format(container_name, str(e)), exc_info=True)
                     return {
                         "discovered_assets": [],
                         "folders_found": [],
-                        "assets_by_folder": {}
+                        "assets_by_folder": {},
+                        "skipped_count": 0
                     }
+            
+            # Track total skipped count across all containers
+            total_skipped_from_containers = 0
             
             # Process containers concurrently (up to 10 containers in parallel, each with 50 blob workers)
             # This allows processing up to 500 blobs simultaneously (10 containers * 50 blobs)
@@ -1704,6 +1731,8 @@ def discover_assets(connection_id):
                         if result:
                             with discovered_assets_lock:
                                 discovered_assets.extend(result["discovered_assets"])
+                                # Aggregate skipped count from containers
+                                total_skipped_from_containers += result.get("skipped_count", 0)
                             with folders_lock:
                                 container_name = container_futures[future]
                                 folders_found[container_name] = result["folders_found"]
@@ -1725,7 +1754,7 @@ def discover_assets(connection_id):
             # Save discovered assets
             created_count = 0
             updated_count = 0
-            skipped_count = 0
+            skipped_count = total_skipped_from_containers  # Start with skipped items from deduplication during discovery
             
             # Process in batches for large discoveries
             for batch_start in range(0, total_assets, batch_size):
@@ -1739,7 +1768,11 @@ def discover_assets(connection_id):
                 
                 for item in batch:
                     try:
-                        if item["action"] == "updated":
+                        if item is None:
+                            # Item was skipped due to deduplication (shouldn't happen here, but handle it)
+                            skipped_count += 1
+                            continue
+                        elif item.get("action") == "updated":
                             # Asset already exists and was updated - commit from thread's db session
                             thread_db = item.get("thread_db")
                             if thread_db:
@@ -1755,7 +1788,7 @@ def discover_assets(connection_id):
                             else:
                                 # Fallback: update in main session
                                 updated_count += 1
-                        elif item["action"] == "created":
+                        elif item.get("action") == "created":
                             # New asset to create
                             asset_data = item["asset_data"]
                             asset = Asset(
@@ -1909,21 +1942,24 @@ def discover_assets(connection_id):
                                 existing_asset = check_asset_exists(db, connector_id, f"file-share://{share_name}/{file_path}") if AZURE_AVAILABLE else None
                                 
                                 # Build asset data
+                                storage_path_for_check = f"file-share://{share_name}/{file_path}"
                                 asset_data = {
                                     "name": file_info.get("name", "unknown"),
                                     "type": "file",
                                     "catalog": "azure_file_share",
                                     "connector_id": connector_id,
-                                    "storage_location": f"file-share://{share_name}/{file_path}",
+                                    "storage_location": storage_path_for_check,
                                     "columns": [],
                                     "business_metadata": build_business_metadata(file_info, {}, file_extension, share_name),
                                     "technical_metadata": {
+                                        "location": storage_path_for_check,  # Add location field for deduplication check
                                         "file_size": file_info.get("size", 0),
                                         "content_type": file_info.get("content_type", "application/octet-stream"),
                                         "last_modified": file_info.get("last_modified"),
                                         "file_attributes": file_info.get("file_attributes"),
                                         "service_type": "azure_file_share",
-                                        "share_name": share_name
+                                        "share_name": share_name,
+                                        "file_path": file_path
                                     }
                                 }
                                 
@@ -1992,7 +2028,8 @@ def discover_assets(connection_id):
                         
                         # Build asset data
                         storage_location_str = f"queue://{queue_name}"
-                        asset_id = f"{connector_id}_{queue_name}_{int(datetime.utcnow().timestamp())}"
+                        # Use consistent ID format (without timestamp to avoid duplicates on refresh)
+                        asset_id = f"azure_queue_{connection.name}_{queue_name}"
                         
                         asset_data = {
                             "id": asset_id,
@@ -2007,6 +2044,7 @@ def discover_assets(connection_id):
                                 "tags": [queue_name, "azure_queue"]
                             },
                             "technical_metadata": {
+                                "location": storage_location_str,  # Add location field for deduplication check
                                 "service_type": "azure_queue",
                                 "queue_name": queue_name,
                                 "metadata": queue.get("metadata", {}),

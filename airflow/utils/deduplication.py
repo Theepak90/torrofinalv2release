@@ -146,6 +146,16 @@ def check_file_exists(
             conn.close()
 
 
+def normalize_path(path: str) -> str:
+    """Normalize storage path for comparison (remove leading/trailing slashes, normalize case)"""
+    if not path:
+        return ""
+    # Remove leading and trailing slashes, but keep internal ones
+    normalized = path.strip('/')
+    # Normalize to lowercase for case-insensitive comparison
+    return normalized.lower()
+
+
 @retry_db_operation(max_retries=None, base_delay=1.0, max_delay=60.0, max_total_time=3600.0)
 def check_asset_exists(
     connector_id: str,
@@ -156,6 +166,13 @@ def check_asset_exists(
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
+            # Normalize the search path
+            normalized_search_path = normalize_path(storage_path)
+            
+            if not normalized_search_path:
+                logger.warning('FN:check_asset_exists connector_id:{} storage_path:{} message:Empty normalized path'.format(connector_id, storage_path))
+                return None
+            
             # Get all assets with matching connector_id
             sql = """
                 SELECT id, technical_metadata, operational_metadata
@@ -165,21 +182,28 @@ def check_asset_exists(
             cursor.execute(sql, (connector_id,))
             assets = cursor.fetchall()
             
-            # Check technical_metadata for matching location/path
+            # Check technical_metadata for matching location/path (normalized comparison)
             for asset in assets:
                 tech_meta = json.loads(asset["technical_metadata"]) if isinstance(asset["technical_metadata"], str) else asset["technical_metadata"]
-                if tech_meta and tech_meta.get("location") == storage_path:
-                    # Extract hashes from technical_metadata
-                    file_hash = tech_meta.get("file_hash") or tech_meta.get("hash", {}).get("value") if isinstance(tech_meta.get("hash"), dict) else None
-                    schema_hash = tech_meta.get("schema_hash")
-                    return {
-                        "id": asset["id"],
-                        "file_hash": file_hash,
-                        "schema_hash": schema_hash,
-                        "technical_metadata": tech_meta,
-                        "operational_metadata": json.loads(asset["operational_metadata"]) if isinstance(asset["operational_metadata"], str) else asset["operational_metadata"]
-                    }
+                if tech_meta:
+                    stored_location = tech_meta.get("location") or tech_meta.get("storage_path") or ""
+                    normalized_stored = normalize_path(stored_location)
+                    
+                    # Exact match after normalization
+                    if normalized_stored == normalized_search_path:
+                        # Extract hashes from technical_metadata
+                        file_hash = tech_meta.get("file_hash") or tech_meta.get("hash", {}).get("value") if isinstance(tech_meta.get("hash"), dict) else None
+                        schema_hash = tech_meta.get("schema_hash")
+                        logger.debug('FN:check_asset_exists connector_id:{} storage_path:{} existing_asset_id:{} message:Found existing asset'.format(connector_id, storage_path, asset["id"]))
+                        return {
+                            "id": asset["id"],
+                            "file_hash": file_hash,
+                            "schema_hash": schema_hash,
+                            "technical_metadata": tech_meta,
+                            "operational_metadata": json.loads(asset["operational_metadata"]) if isinstance(asset["operational_metadata"], str) else asset["operational_metadata"]
+                        }
             
+            logger.debug('FN:check_asset_exists connector_id:{} storage_path:{} message:No existing asset found'.format(connector_id, storage_path))
             return None
     except Exception as e:
         logger.error('FN:check_asset_exists connector_id:{} storage_path:{} error:{}'.format(connector_id, storage_path, str(e)))

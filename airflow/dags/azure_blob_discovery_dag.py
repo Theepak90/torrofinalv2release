@@ -331,16 +331,19 @@ def discover_azure_blobs(**context):
                                     
                                     should_update, schema_changed = should_update_or_insert(existing_record, file_hash, schema_hash)
                                     
+                                    # If asset exists but nothing changed, skip it (deduplication)
+                                    if existing_record:
+                                        if not should_update:
+                                            batch_skipped += 1
+                                            if batch_skipped % 50 == 0:  # Log every 50 skipped files
+                                                logger.info('FN:discover_azure_blobs blob_path:{} existing_asset_id:{} skipped_count:{} message:Skipping unchanged asset'.format(blob_path, existing_record.get('id'), batch_skipped))
+                                            continue
+                                        else:
+                                            logger.info('FN:discover_azure_blobs blob_path:{} existing_asset_id:{} schema_changed:{} message:Updating existing asset'.format(blob_path, existing_record.get('id'), schema_changed))
+                                    
                                     if not should_update and not existing_record:
                                         # This shouldn't happen, but handle it
-                                        logger.warning('FN:discover_azure_blobs blob_path:{} should_update:{} existing_record:{}'.format(blob_path, should_update, bool(existing_record)))
-                                        continue
-                                    
-                                    # Skip if nothing changed (both file_hash and schema_hash are same)
-                                    if not should_update and existing_record:
-                                        batch_skipped += 1
-                                        if batch_skipped % 50 == 0:  # Log every 50 skipped files
-                                            logger.info('FN:discover_azure_blobs skipped_count:{}'.format(batch_skipped))
+                                        logger.warning('FN:discover_azure_blobs blob_path:{} should_update:{} existing_record:{} message:Unexpected state'.format(blob_path, should_update, bool(existing_record)))
                                         continue
                                     
                                     storage_location = get_storage_location_json(
@@ -597,11 +600,13 @@ def discover_azure_blobs(**context):
                                 
                                 # Create asset for file share file (similar to blob processing)
                                 # Simplified version - can be enhanced with full metadata extraction
+                                storage_path_for_check = f"file-share://{share_name}/{file_path}"
                                 storage_location = {
                                     "type": "azure_file_share",
                                     "account_name": config_data.get("account_name", ""),
                                     "share_name": share_name,
-                                    "file_path": file_path
+                                    "file_path": file_path,
+                                    "path": storage_path_for_check
                                 }
                                 
                                 # Insert asset and discovery record
@@ -620,10 +625,12 @@ def discover_azure_blobs(**context):
                                             json.dumps([]),
                                             json.dumps({"description": f"Azure File Share: {share_name}/{file_path}"}),
                                             json.dumps({
+                                                "location": storage_path_for_check,  # Add location field for deduplication check
                                                 "file_size": file_info.get("size", 0),
                                                 "content_type": file_info.get("content_type", "application/octet-stream"),
                                                 "service_type": "azure_file_share",
-                                                "share_name": share_name
+                                                "share_name": share_name,
+                                                "file_path": file_path
                                             })
                                         ))
                                         asset_id = cursor.lastrowid
@@ -689,10 +696,12 @@ def discover_azure_blobs(**context):
                             continue
                         
                         # Create asset for queue
+                        storage_path_for_check = f"queue://{queue_name}"
                         storage_location = {
                             "type": "azure_queue",
                             "account_name": config_data.get("account_name", ""),
-                            "queue_name": queue_name
+                            "queue_name": queue_name,
+                            "path": storage_path_for_check
                         }
                         
                         conn = get_db_connection()
@@ -710,6 +719,7 @@ def discover_azure_blobs(**context):
                                     json.dumps([]),
                                     json.dumps({"description": f"Azure Queue: {queue_name}"}),
                                     json.dumps({
+                                        "location": storage_path_for_check,  # Add location field for deduplication check
                                         "service_type": "azure_queue",
                                         "queue_name": queue_name
                                     })
@@ -774,10 +784,12 @@ def discover_azure_blobs(**context):
                             continue
                         
                         # Create asset for table
+                        storage_path_for_check = f"table://{table_name}"
                         storage_location = {
                             "type": "azure_table",
                             "account_name": config_data.get("account_name", ""),
-                            "table_name": table_name
+                            "table_name": table_name,
+                            "path": storage_path_for_check
                         }
                         
                         conn = get_db_connection()
@@ -795,6 +807,7 @@ def discover_azure_blobs(**context):
                                     json.dumps([]),
                                     json.dumps({"description": f"Azure Table: {table_name}"}),
                                     json.dumps({
+                                        "location": storage_path_for_check,  # Add location field for deduplication check
                                         "service_type": "azure_table",
                                         "table_name": table_name
                                     })
