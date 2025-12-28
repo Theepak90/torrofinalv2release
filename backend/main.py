@@ -272,6 +272,19 @@ def delete_connection(connection_id):
         
         # Find all assets associated with this connection
         associated_assets = db.query(Asset).filter(Asset.connector_id == connector_id_pattern).all()
+        asset_ids = [asset.id for asset in associated_assets]
+
+        # Delete lineage relationships that reference these assets (before deleting assets)
+        # This prevents foreign key constraint violations
+        if asset_ids:
+            # LineageRelationship is already imported at the top of the file
+            lineage_relationships = db.query(LineageRelationship).filter(
+                (LineageRelationship.source_asset_id.in_(asset_ids)) |
+                (LineageRelationship.target_asset_id.in_(asset_ids))
+            ).all()
+            for rel in lineage_relationships:
+                db.delete(rel)
+            logger.debug('FN:delete_connection connection_id:{} deleted_lineage_relationships:{}'.format(connection_id, len(lineage_relationships)))
 
         # Delete all associated assets
         deleted_count = len(associated_assets)
