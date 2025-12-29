@@ -45,7 +45,7 @@ from models import Asset, Connection, LineageRelationship, LineageHistory, SQLQu
 import logging
 from logging.handlers import RotatingFileHandler
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import sys
 import json
@@ -494,57 +494,176 @@ def get_assets():
 @app.route('/api/discovery/<int:discovery_id>', methods=['GET'])
 @handle_error
 def get_discovery_by_id(discovery_id):
-    """Get discovery record and associated asset by discovery_id"""
+    """Get discovery record and associated asset by discovery_id - returns exact schema as requested"""
     db = SessionLocal()
     try:
         discovery = db.query(DataDiscovery).filter(DataDiscovery.id == discovery_id).first()
         if not discovery:
             return jsonify({"error": "Discovery record not found"}), 404
         
+        # Extract file metadata fields
+        file_metadata = discovery.file_metadata or {}
+        file_basic = file_metadata.get("basic", {})
+        file_hash_obj = file_metadata.get("hash", {})
+        file_timestamps = file_metadata.get("timestamps", {})
+        
+        # Extract storage location fields
+        storage_location = discovery.storage_location or {}
+        storage_connection = storage_location.get("connection", {})
+        storage_container = storage_location.get("container", {})
+        
+        # Extract storage metadata
+        storage_metadata = discovery.storage_metadata or {}
+        azure_storage_metadata = storage_metadata.get("azure", {})
+        
+        # Format dates in RFC 2822 format (like "Thu, 25 Dec 2025 16:22:13 GMT")
+        def format_rfc2822(dt):
+            if not dt:
+                return None
+            if isinstance(dt, str):
+                try:
+                    # Try parsing ISO format
+                    if 'T' in dt:
+                        if dt.endswith('Z'):
+                            dt = dt.replace('Z', '+00:00')
+                        dt = datetime.fromisoformat(dt)
+                    else:
+                        # Try simple date format
+                        try:
+                            dt = datetime.strptime(dt, '%Y-%m-%d')
+                        except:
+                            return dt
+                except:
+                    return dt
+            if hasattr(dt, 'strftime'):
+                # Convert to UTC if timezone-aware, otherwise assume UTC
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
+            return None
+        
+        # Build result matching exact schema
         result = {
-            "discovery_id": discovery.id,
-            "asset_id": discovery.asset_id,
-            "status": discovery.status,
-            "approval_status": discovery.approval_status,
-            "storage_location": discovery.storage_location,
-            "file_metadata": discovery.file_metadata,
-            "schema_json": discovery.schema_json,
-            "discovered_at": discovery.discovered_at.isoformat() if discovery.discovered_at else None,
-            "last_checked_at": discovery.last_checked_at.isoformat() if discovery.last_checked_at else None,
-            "approval_workflow": discovery.approval_workflow,
-            "published_at": discovery.published_at.isoformat() if discovery.published_at else None,
-            "published_to": discovery.published_to,
-            "environment": discovery.environment,
-            "data_source_type": discovery.data_source_type,
-            "folder_path": discovery.folder_path,
-            "tags": discovery.tags,
-            "discovery_info": discovery.discovery_info,
-            "storage_metadata": discovery.storage_metadata,
-            "storage_data_metadata": discovery.storage_data_metadata,
+            "id": discovery.id,
             "additional_metadata": discovery.additional_metadata,
+            "approval_status": discovery.approval_status or "pending_review",
+            "approval_workflow": discovery.approval_workflow,
+            "created_at": format_rfc2822(discovery.created_at),
+            "created_by": discovery.created_by or "api_trigger",
+            "data_publishing_id": discovery.data_publishing_id,
             "data_quality_score": float(discovery.data_quality_score) if discovery.data_quality_score else None,
-            "validation_status": discovery.validation_status,
-            "validated_at": discovery.validated_at.isoformat() if discovery.validated_at else None,
-            "created_at": discovery.created_at.isoformat() if discovery.created_at else None,
-            "updated_at": discovery.updated_at.isoformat() if discovery.updated_at else None
+            "data_source_type": discovery.data_source_type or file_basic.get("format", ""),
+            "deleted_at": format_rfc2822(discovery.deleted_at),
+            "discovered_at": format_rfc2822(discovery.discovered_at),
+            "discovery_info": discovery.discovery_info or {},
+            "env_type": discovery.env_type or "production",
+            "environment": discovery.environment or "prod",
+            "file_hash": file_hash_obj.get("value", ""),
+            "file_last_modified": format_rfc2822(file_timestamps.get("last_modified")) or format_rfc2822(azure_storage_metadata.get("last_modified")),
+            "file_metadata": file_metadata,
+            "file_name": file_basic.get("name", ""),
+            "file_size_bytes": file_basic.get("size_bytes", 0),
+            "folder_path": discovery.folder_path or "",
+            "is_active": 1 if discovery.is_active else 0,
+            "is_visible": 1 if discovery.is_visible else 0,
+            "last_checked_at": format_rfc2822(discovery.last_checked_at),
+            "notification_recipients": discovery.notification_recipients,
+            "notification_sent_at": format_rfc2822(discovery.notification_sent_at),
+            "published_at": format_rfc2822(discovery.published_at),
+            "published_to": discovery.published_to,
+            "schema_hash": discovery.schema_hash or "",
+            "schema_json": discovery.schema_json or {"columns": [], "num_columns": 0},
+            "schema_version": discovery.schema_version,
+            "status": discovery.status or "pending",
+            "storage_data_metadata": discovery.storage_data_metadata or {},
+            "storage_identifier": storage_connection.get("account_name", ""),
+            "storage_location": storage_location,
+            "storage_metadata": storage_metadata,
+            "storage_path": storage_location.get("path", ""),
+            "storage_type": storage_location.get("type", "azure_blob"),
+            "tags": discovery.tags,
+            "updated_at": format_rfc2822(discovery.updated_at),
+            "validated_at": format_rfc2822(discovery.validated_at),
+            "validation_errors": discovery.validation_errors,
+            "validation_status": discovery.validation_status
         }
         
-        # Get associated asset if available
-        if discovery.asset_id:
-            asset = db.query(Asset).filter(Asset.id == discovery.asset_id).first()
-            if asset:
-                result["asset"] = {
-                    "id": asset.id,
-                    "name": asset.name,
-                    "type": asset.type,
-                    "catalog": asset.catalog,
-                    "connector_id": asset.connector_id,
-                    "discovered_at": asset.discovered_at.isoformat() if asset.discovered_at else None,
-                    "technical_metadata": asset.technical_metadata,
-                    "operational_metadata": asset.operational_metadata,
-                    "business_metadata": asset.business_metadata,
-                    "columns": asset.columns
+        # Ensure schema_json has all required fields from example
+        if not result["schema_json"] or not isinstance(result["schema_json"], dict):
+            result["schema_json"] = {"columns": [], "num_columns": 0}
+        
+        schema_json = result["schema_json"]
+        
+        # Ensure schema_json has all fields from example structure
+        if "delimiter" not in schema_json:
+            # Try to extract from file_metadata format_specific first
+            format_specific = file_metadata.get("format_specific", {})
+            csv_info = format_specific.get("csv", {})
+            if csv_info:
+                schema_json["delimiter"] = csv_info.get("delimiter", ",")
+                schema_json["has_header"] = csv_info.get("has_header", True)
+            else:
+                # Try to infer from file extension
+                file_format = file_basic.get("format", "").lower()
+                if file_format == "csv":
+                    schema_json["delimiter"] = ","
+                    schema_json["has_header"] = True
+                else:
+                    schema_json["delimiter"] = None
+                    schema_json["has_header"] = None
+        
+        # Ensure has_header exists
+        if "has_header" not in schema_json:
+            schema_json["has_header"] = None
+        
+        # Ensure num_rows and sample_rows_count exist
+        if "num_rows" not in schema_json:
+            schema_json["num_rows"] = None
+        if "sample_rows_count" not in schema_json:
+            # Count sample values from columns if available
+            columns = schema_json.get("columns", [])
+            if columns and len(columns) > 0:
+                first_col = columns[0]
+                sample_values = first_col.get("sample_values", [])
+                schema_json["sample_rows_count"] = len(sample_values) if sample_values else None
+            else:
+                schema_json["sample_rows_count"] = None
+        
+        # Ensure num_columns is set
+        if "num_columns" not in schema_json:
+            schema_json["num_columns"] = len(schema_json.get("columns", []))
+        
+        # Ensure file_metadata has format_specific if missing
+        if not result["file_metadata"] or not isinstance(result["file_metadata"], dict):
+            result["file_metadata"] = {}
+        
+        file_meta = result["file_metadata"]
+        if "format_specific" not in file_meta:
+            # Try to build format_specific from file extension
+            file_format = file_basic.get("format", "").lower()
+            format_specific = {}
+            if file_format == "csv":
+                format_specific["csv"] = {
+                    "delimiter": ",",
+                    "encoding": "utf-8",
+                    "has_header": True
                 }
+            elif file_format in ["parquet", "json", "avro", "excel", "xml", "orc", "delta_lake"]:
+                format_specific[file_format] = {}
+            if format_specific:
+                file_meta["format_specific"] = format_specific
+            else:
+                file_meta["format_specific"] = {}
+        
+        # Ensure storage_location has metadata key
+        if result["storage_location"] and isinstance(result["storage_location"], dict):
+            if "metadata" not in result["storage_location"]:
+                result["storage_location"]["metadata"] = {}
+        
+        # Ensure discovery_info has proper structure (batch, scan, source)
+        # If discovery_info has old structure, preserve it but ensure it's a dict
+        if not result["discovery_info"] or not isinstance(result["discovery_info"], dict):
+            result["discovery_info"] = {}
         
         return jsonify(result), 200
     except Exception as e:
@@ -903,6 +1022,63 @@ def create_assets():
     finally:
         db.close()
 
+@app.route('/api/assets/<asset_id>', methods=['GET'])
+@handle_error
+def get_asset_by_id(asset_id):
+    """Get asset by ID with all metadata for view button"""
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            return jsonify({"error": "Asset not found"}), 404
+        
+        # Get latest discovery record for this asset
+        discovery = db.query(DataDiscovery).filter(
+            DataDiscovery.asset_id == asset_id
+        ).order_by(DataDiscovery.id.desc()).first()
+        
+        result = {
+            "id": asset.id,
+            "name": asset.name,
+            "type": asset.type,
+            "catalog": asset.catalog,
+            "connector_id": asset.connector_id,
+            "discovered_at": asset.discovered_at.isoformat() if asset.discovered_at else None,
+            "columns": asset.columns or [],
+            "technical_metadata": asset.technical_metadata or {},
+            "operational_metadata": asset.operational_metadata or {},
+            "business_metadata": asset.business_metadata or {}
+        }
+        
+        # Add discovery information if available
+        if discovery:
+            result["discovery_id"] = discovery.id
+            result["discovery_status"] = discovery.status
+            result["discovery_approval_status"] = discovery.approval_status
+            result["discovery_info"] = discovery.discovery_info
+            result["storage_location"] = discovery.storage_location
+            result["file_metadata"] = discovery.file_metadata
+            result["schema_json"] = discovery.schema_json
+            result["schema_hash"] = discovery.schema_hash
+            result["folder_path"] = discovery.folder_path
+            result["data_source_type"] = discovery.data_source_type
+            result["environment"] = discovery.environment
+            result["env_type"] = discovery.env_type
+            result["tags"] = discovery.tags
+            result["storage_metadata"] = discovery.storage_metadata
+            result["storage_data_metadata"] = discovery.storage_data_metadata
+            result["additional_metadata"] = discovery.additional_metadata
+            result["data_quality_score"] = float(discovery.data_quality_score) if discovery.data_quality_score else None
+            result["validation_status"] = discovery.validation_status
+            result["validated_at"] = discovery.validated_at.isoformat() if discovery.validated_at else None
+        
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error('FN:get_asset_by_id asset_id:{} error:{}'.format(asset_id, str(e)), exc_info=True)
+        return jsonify({"error": str(e)}), 400
+    finally:
+        db.close()
+
 @app.route('/api/assets/<asset_id>', methods=['PUT'])
 @handle_error
 def update_asset(asset_id):
@@ -1071,21 +1247,53 @@ def list_connection_files(connection_id):
     finally:
         db.close()
 
-@app.route('/api/connections/test-config', methods=['POST'])
+@app.route('/api/connections/test-config', methods=['GET', 'POST'])
 @handle_error
 def test_connection_config():
-    """Test a connection configuration WITHOUT saving it to database"""
+    """Test a connection configuration WITHOUT saving it to database
+    Supports both GET and POST methods:
+    - POST: config in request body as JSON: {"config": {...}}
+    - GET: config as JSON string in query param 'config', or individual query params
+    """
     if not AZURE_AVAILABLE:
         return jsonify({"error": "Azure utilities not available"}), 503
     
     try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "Request body is required"}), 400
+        config_data = {}
         
-        config_data = data.get('config', {})
+        if request.method == 'POST':
+            # POST: Get config from request body
+            data = request.json
+            if not data:
+                return jsonify({"error": "Request body is required"}), 400
+            config_data = data.get('config', {})
+        else:
+            # GET: Get config from query parameters
+            # Option 1: config as JSON string in query param
+            config_json_str = request.args.get('config')
+            if config_json_str:
+                try:
+                    import json
+                    config_data = json.loads(config_json_str)
+                except json.JSONDecodeError:
+                    return jsonify({"error": "Invalid JSON in 'config' query parameter"}), 400
+            else:
+                # Option 2: Individual query parameters (for simple configs)
+                config_data = {
+                    'connection_string': request.args.get('connection_string'),
+                    'account_name': request.args.get('account_name'),
+                    'tenant_id': request.args.get('tenant_id'),
+                    'client_id': request.args.get('client_id'),
+                    'client_secret': request.args.get('client_secret'),
+                    'folder_path': request.args.get('folder_path'),
+                    'storage_type': request.args.get('storage_type'),
+                    'use_dfs_endpoint': request.args.get('use_dfs_endpoint', '').lower() == 'true',
+                }
+                # Remove None values
+                config_data = {k: v for k, v in config_data.items() if v is not None}
+        
         if not config_data:
-            return jsonify({"error": "Config is required"}), 400
+            return jsonify({"error": "Config is required. For GET, provide 'config' query param as JSON string or individual params"}), 400
         
         # Test the connection using the provided config
         try:
@@ -1400,9 +1608,11 @@ def build_operational_metadata(azure_properties, current_date):
     # Extract access level from Azure properties
     access_level = "internal"
     if azure_properties:
-        lease_status = azure_properties.get("lease_status", "").lower()
-        if lease_status == "locked":
-            access_level = "restricted"
+        lease_status = azure_properties.get("lease_status")
+        if lease_status and isinstance(lease_status, str):
+            lease_status = lease_status.lower()
+            if lease_status == "locked":
+                access_level = "restricted"
         elif azure_properties.get("access_tier") == "Archive":
             access_level = "archived"
     
@@ -1579,7 +1789,8 @@ def discover_assets(connection_id):
                         """Process a single blob and return asset data"""
                         try:
                             blob_path = blob_info["full_path"]
-                            file_extension = blob_info["name"].split(".")[-1].lower() if "." in blob_info["name"] else ""
+                            blob_name = blob_info.get("name", "")
+                            file_extension = blob_name.split(".")[-1].lower() if blob_name and "." in blob_name else ""
                             connector_id = f"azure_blob_{connection.name}"
                             
                             # Track asset for response
@@ -1633,10 +1844,15 @@ def discover_assets(connection_id):
                                 
                                 # Get file sample for metadata extraction
                                 # Fetch metadata for every file in the datalake to ensure complete information
+                                # For CSV/JSON, we need more bytes to extract columns properly
                                 file_sample = None
                                 try:
                                     if file_extension == "parquet":
+                                        # Parquet metadata is at the end of the file
                                         file_sample = blob_client.get_blob_tail(container_name, blob_path, max_bytes=8192)
+                                    elif file_extension in ["csv", "json"]:
+                                        # CSV and JSON need more bytes to extract all columns and sample data
+                                        file_sample = blob_client.get_blob_sample(container_name, blob_path, max_bytes=8192)
                                     else:
                                         file_sample = blob_client.get_blob_sample(container_name, blob_path, max_bytes=1024)
                                 except Exception as e:
@@ -1755,6 +1971,8 @@ def discover_assets(connection_id):
                                     )
                                     
                                     columns_clean = clean_for_json(metadata.get("schema_json", {}).get("columns", []))
+                                    # Store full schema_json for DataDiscovery record
+                                    schema_json_full = clean_for_json(metadata.get("schema_json", {}))
                                     
                                     return {
                                         "action": "created",
@@ -1768,7 +1986,8 @@ def discover_assets(connection_id):
                                             "technical_metadata": technical_meta,
                                             "operational_metadata": operational_meta,
                                             "business_metadata": business_meta,
-                                            "columns": columns_clean
+                                            "columns": columns_clean,
+                                            "schema_json": schema_json_full  # Store full schema_json for DataDiscovery
                                         },
                                         "name": asset_name,
                                         "folder": asset_folder,
@@ -1982,11 +2201,26 @@ def discover_assets(connection_id):
                             # Get schema_hash from technical metadata
                             schema_hash = tech_meta.get("schema_hash", "")
                             
+                            # Get full schema_json (with columns, delimiter, has_header, etc.) from asset_data
+                            # If not available, fallback to building from columns
+                            schema_json_full = asset_data.get('schema_json', {})
+                            if not schema_json_full or not isinstance(schema_json_full, dict):
+                                # Fallback: build schema_json from columns
+                                columns = asset_data.get('columns', [])
+                                schema_json_full = {
+                                    "columns": columns,
+                                    "num_columns": len(columns),
+                                    "delimiter": None,
+                                    "has_header": None,
+                                    "num_rows": None,
+                                    "sample_rows_count": None
+                                }
+                            
                             discovery = DataDiscovery(
                                 asset_id=asset.id,
                                 storage_location=storage_location,
                                 file_metadata=file_metadata,
-                                schema_json=asset_data.get('columns', []),
+                                schema_json=schema_json_full,  # Use full schema_json dict, not just columns
                                 schema_hash=schema_hash,
                                 status="pending",
                                 approval_status=None,

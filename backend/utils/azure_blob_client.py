@@ -479,6 +479,7 @@ class AzureBlobClient:
         """List all file shares in the storage account"""
         try:
             from azure.storage.fileshare import ShareServiceClient
+            from azure.identity import TokenCredential
             
             connection_string, credential = self._get_credential_or_connection_string()
             
@@ -487,7 +488,11 @@ class AzureBlobClient:
             elif credential:
                 account_name = self._get_account_name()
                 share_service_url = f"https://{account_name}.file.core.windows.net"
-                share_service_client = ShareServiceClient(account_url=share_service_url, credential=credential)
+                # Add token_intent for TokenCredential (Service Principal)
+                if isinstance(credential, TokenCredential):
+                    share_service_client = ShareServiceClient(account_url=share_service_url, credential=credential, token_intent="backup")
+                else:
+                    share_service_client = ShareServiceClient(account_url=share_service_url, credential=credential)
             else:
                 raise ValueError("Cannot create ShareServiceClient - missing credentials")
             
@@ -513,6 +518,7 @@ class AzureBlobClient:
         """List all queues in the storage account"""
         try:
             from azure.storage.queue import QueueServiceClient
+            from azure.identity import TokenCredential
             
             connection_string, credential = self._get_credential_or_connection_string()
             
@@ -521,7 +527,11 @@ class AzureBlobClient:
             elif credential:
                 account_name = self._get_account_name()
                 queue_service_url = f"https://{account_name}.queue.core.windows.net"
-                queue_service_client = QueueServiceClient(account_url=queue_service_url, credential=credential)
+                # Add token_intent for TokenCredential (Service Principal)
+                if isinstance(credential, TokenCredential):
+                    queue_service_client = QueueServiceClient(account_url=queue_service_url, credential=credential, token_intent="backup")
+                else:
+                    queue_service_client = QueueServiceClient(account_url=queue_service_url, credential=credential)
             else:
                 raise ValueError("Cannot create QueueServiceClient - missing credentials")
             
@@ -545,6 +555,7 @@ class AzureBlobClient:
         """List all tables in the storage account"""
         try:
             from azure.data.tables import TableServiceClient
+            from azure.identity import TokenCredential
             
             connection_string, credential = self._get_credential_or_connection_string()
             
@@ -553,7 +564,11 @@ class AzureBlobClient:
             elif credential:
                 account_name = self._get_account_name()
                 table_service_url = f"https://{account_name}.table.core.windows.net"
-                table_service_client = TableServiceClient(endpoint=table_service_url, credential=credential)
+                # Add token_intent for TokenCredential (Service Principal)
+                if isinstance(credential, TokenCredential):
+                    table_service_client = TableServiceClient(endpoint=table_service_url, credential=credential, token_intent="backup")
+                else:
+                    table_service_client = TableServiceClient(endpoint=table_service_url, credential=credential)
             else:
                 raise ValueError("Cannot create TableServiceClient - missing credentials")
             
@@ -579,12 +594,18 @@ class AzureBlobClient:
             
             connection_string, credential = self._get_credential_or_connection_string()
             
+            from azure.identity import TokenCredential
+            
             if connection_string:
                 share_client = ShareClient.from_connection_string(connection_string, share_name)
             elif credential:
                 account_name = self._get_account_name()
                 share_service_url = f"https://{account_name}.file.core.windows.net"
-                share_client = ShareClient(account_url=f"{share_service_url}/{share_name}", credential=credential)
+                # Add token_intent for TokenCredential (Service Principal)
+                if isinstance(credential, TokenCredential):
+                    share_client = ShareClient(account_url=f"{share_service_url}/{share_name}", credential=credential, token_intent="backup")
+                else:
+                    share_client = ShareClient(account_url=f"{share_service_url}/{share_name}", credential=credential)
             else:
                 raise ValueError("Cannot create ShareClient - missing credentials")
             
