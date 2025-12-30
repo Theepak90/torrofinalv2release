@@ -81,19 +81,32 @@ def check_asset_exists(
             logger.warning(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} message:Empty normalized path')
             return None
         
-        # Look for assets with matching connector_id and storage path in technical_metadata
-        assets = db.query(Asset).filter(
-            Asset.connector_id == connector_id
-        ).all()
+        # OPTIMIZED: Use JSON path query instead of loading all assets
+        # This is much faster for large datasets (4000+ files)
+        # Query using JSON_EXTRACT for MySQL JSON columns
+        from sqlalchemy import text
         
-        # Check technical_metadata for matching location/path (normalized comparison)
-        for asset in assets:
-            tech_meta = asset.technical_metadata or {}
-            stored_location = tech_meta.get('location') or tech_meta.get('storage_path') or ""
-            normalized_stored = normalize_path(stored_location)
-            
-            # Exact match after normalization
-            if normalized_stored == normalized_search_path:
+        # Try to find asset using JSON path query (much faster)
+        query = text("""
+            SELECT id FROM assets 
+            WHERE connector_id = :connector_id 
+            AND (
+                JSON_UNQUOTE(JSON_EXTRACT(technical_metadata, '$.location')) = :path
+                OR JSON_UNQUOTE(JSON_EXTRACT(technical_metadata, '$.storage_path')) = :path
+            )
+            LIMIT 1
+        """)
+        
+        result = db.execute(query, {
+            'connector_id': connector_id,
+            'path': normalized_search_path
+        }).fetchone()
+        
+        if result:
+            asset_id = result[0]
+            # Load the full asset object
+            asset = db.query(Asset).filter(Asset.id == asset_id).first()
+            if asset:
                 logger.debug(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} existing_asset_id:{asset.id} message:Found existing asset')
                 return asset
         
@@ -101,6 +114,23 @@ def check_asset_exists(
         return None
     except Exception as e:
         logger.error(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} error:{str(e)}')
+        # Fallback to old method if JSON query fails
+        try:
+            Asset = _get_asset_model()
+            assets = db.query(Asset).filter(
+                Asset.connector_id == connector_id
+            ).all()
+            
+            normalized_search_path = normalize_path(storage_path)
+            for asset in assets:
+                tech_meta = asset.technical_metadata or {}
+                stored_location = tech_meta.get('location') or tech_meta.get('storage_path') or ""
+                normalized_stored = normalize_path(stored_location)
+                
+                if normalized_stored == normalized_search_path:
+                    return asset
+        except:
+            pass
         return None
 
 

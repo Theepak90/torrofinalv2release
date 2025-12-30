@@ -33,9 +33,24 @@ class Config:
     DB_NAME = os.getenv("DB_NAME", "torroforexcel")
     
     # Database Connection Pool Configuration
+    # Set to 75/75 for high concurrency (20-30 concurrent users)
+    # pool_size: Base connections always available (75 = ~3 per user for 25 users)
+    # max_overflow: Additional connections during peak load (75 = total max 150)
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "75"))
     DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "75"))
     DB_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    
+    # Discovery Configuration (for large-scale operations)
+    # Batch size for processing large discoveries (4000+ files)
+    DISCOVERY_BATCH_SIZE = int(os.getenv("DISCOVERY_BATCH_SIZE", "1500"))
+    
+    # Performance optimization: Skip file samples for faster discovery
+    # Set to True to skip downloading file samples (faster but less metadata)
+    DISCOVERY_SKIP_FILE_SAMPLES = os.getenv("DISCOVERY_SKIP_FILE_SAMPLES", "false").lower() == "true"
+    
+    # Maximum file size (in bytes) to fetch samples for
+    # Files larger than this will skip sample download
+    DISCOVERY_MAX_SAMPLE_SIZE = int(os.getenv("DISCOVERY_MAX_SAMPLE_SIZE", str(100 * 1024 * 1024)))  # 100MB default
 
     API_VERSION = os.getenv("API_VERSION", "v1")
     

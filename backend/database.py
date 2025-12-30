@@ -71,7 +71,12 @@ engine = create_engine(
     max_overflow=MAX_OVERFLOW,
     pool_recycle=POOL_RECYCLE,
     pool_pre_ping=True,
-    echo=os.getenv("SQL_ECHO", "false").lower() == "true"
+    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
+    connect_args={
+        "connect_timeout": 10,
+        "read_timeout": 120,  # Increased for large queries (4000+ files)
+        "write_timeout": 180  # Increased for large batch commits (4000+ files = 2-3 batches)
+    }
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

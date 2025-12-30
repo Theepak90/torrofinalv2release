@@ -1781,8 +1781,15 @@ def discover_assets(connection_id):
                         sample_names = [b.get('name', 'unknown') for b in blobs[:5]]
                         logger.info('FN:discover_assets container_name:{} sample_blob_names:{}'.format(container_name, sample_names))
                     
-                    # Process blobs with 50 concurrent workers (optimized for large-scale discovery)
-                    max_workers = 50 if len(blobs) > 500 else 20
+                    # OPTIMIZED: Scale workers based on file count for better performance
+                    # For 4000 files: use 60 workers (optimal for I/O-bound operations)
+                    # Balance between concurrency and resource usage
+                    if len(blobs) > 2000:
+                        max_workers = 60  # High concurrency for very large discoveries
+                    elif len(blobs) > 500:
+                        max_workers = 50  # Medium-high for large discoveries
+                    else:
+                        max_workers = 20  # Lower for small discoveries
                     logger.info('FN:discover_assets container_name:{} total_blobs:{} message:Processing with {} concurrent workers'.format(container_name, len(blobs), max_workers))
                     
                     def process_blob(blob_info):
@@ -1804,46 +1811,60 @@ def discover_assets(connection_id):
                             # Create a new database session for this thread
                             thread_db = SessionLocal()
                             try:
-                                # Check if asset already exists (deduplication)
+                                # Deduplication: Only check for existing assets if this is a refresh (not initial discovery)
+                                # Check if there are any existing assets for this connection to determine if it's a refresh
                                 existing_asset = None
                                 if AZURE_AVAILABLE:
+                                    # Only do deduplication if this connection already has assets (refresh scenario)
+                                    # For initial discovery, skip deduplication to create all assets
                                     try:
-                                        existing_asset = check_asset_exists(thread_db, connector_id, blob_path)
-                                        if existing_asset:
-                                            logger.debug('FN:discover_assets blob_path:{} existing_asset_id:{} message:Found existing asset for deduplication'.format(blob_path, existing_asset.id))
+                                        # Quick check: see if any assets exist for this connector
+                                        existing_assets_count = thread_db.query(Asset).filter(
+                                            Asset.connector_id == connector_id
+                                        ).count()
+                                        
+                                        # Only do deduplication if assets already exist (this is a refresh)
+                                        if existing_assets_count > 0:
+                                            existing_asset = check_asset_exists(thread_db, connector_id, blob_path)
+                                            if existing_asset:
+                                                logger.debug('FN:discover_assets blob_path:{} existing_asset_id:{} message:Found existing asset for deduplication (refresh)'.format(blob_path, existing_asset.id))
+                                        else:
+                                            logger.debug('FN:discover_assets connector_id:{} message:Initial discovery - skipping deduplication'.format(connector_id))
                                     except Exception as e:
                                         logger.error('FN:discover_assets blob_path:{} error:check_asset_exists failed error:{}'.format(blob_path, str(e)))
                                         # Continue without deduplication if check fails (shouldn't happen, but be safe)
                                         existing_asset = None
                                 
-                                # Get full blob properties from Azure for complete metadata
-                                # This ensures we have all metadata for every file in the datalake
-                                azure_properties = None
-                                try:
-                                    azure_properties = blob_client.get_blob_properties(container_name, blob_path)
-                                    # Ensure size is properly extracted - get_blob_properties returns size in "size" key
-                                    if azure_properties and "size" in azure_properties:
-                                        # Size is already in azure_properties from get_blob_properties
-                                        logger.debug('FN:discover_assets container_name:{} blob_path:{} size:{} message:Got size from Azure properties'.format(container_name, blob_path, azure_properties.get("size", 0)))
-                                except Exception as e:
-                                    logger.warning('FN:discover_assets container_name:{} blob_path:{} message:Could not get blob properties error:{}'.format(container_name, blob_path, str(e)))
-                                    # Fallback to blob_info if properties fetch fails
-                                    azure_properties = {
-                                        "etag": blob_info.get("etag", ""),
-                                        "size": blob_info.get("size", 0),
-                                        "content_type": blob_info.get("content_type", "application/octet-stream"),
-                                        "created_at": blob_info.get("created_at"),
-                                        "last_modified": blob_info.get("last_modified"),
-                                        "access_tier": blob_info.get("access_tier"),
-                                        "lease_status": blob_info.get("lease_status"),
-                                        "content_encoding": blob_info.get("content_encoding"),
-                                        "content_language": blob_info.get("content_language"),
-                                        "cache_control": blob_info.get("cache_control"),
-                                        "metadata": blob_info.get("metadata", {})
-                                    }
+                                # OPTIMIZED: Use properties from list_blobs() instead of making extra API calls
+                                # list_blobs() already returns all properties we need, avoiding 4000+ extra API calls
+                                # This significantly improves performance for large discoveries
+                                azure_properties = {
+                                    "etag": blob_info.get("etag", ""),
+                                    "size": blob_info.get("size", 0),
+                                    "content_type": blob_info.get("content_type", "application/octet-stream"),
+                                    "created_at": blob_info.get("created_at"),
+                                    "last_modified": blob_info.get("last_modified"),
+                                    "access_tier": blob_info.get("access_tier"),
+                                    "lease_status": blob_info.get("lease_status"),
+                                    "content_encoding": blob_info.get("content_encoding"),
+                                    "content_language": blob_info.get("content_language"),
+                                    "cache_control": blob_info.get("cache_control"),
+                                    "metadata": blob_info.get("metadata", {})
+                                }
+                                
+                                # Only fetch additional properties if critical metadata is missing
+                                # For 4000 files, this avoids 4000+ redundant API calls
+                                if not azure_properties.get("size") or not azure_properties.get("last_modified"):
+                                    try:
+                                        additional_props = blob_client.get_blob_properties(container_name, blob_path)
+                                        if additional_props:
+                                            azure_properties.update(additional_props)
+                                            logger.debug('FN:discover_assets container_name:{} blob_path:{} message:Fetched additional properties'.format(container_name, blob_path))
+                                    except Exception as e:
+                                        logger.debug('FN:discover_assets container_name:{} blob_path:{} message:Using list_blobs properties only error:{}'.format(container_name, blob_path, str(e)))
                                 
                                 # Get file sample for metadata extraction
-                                # Fetch metadata for every file in the datalake to ensure complete information
+                                # Fetch metadata for every file to ensure complete information
                                 # For CSV/JSON, we need more bytes to extract columns properly
                                 file_sample = None
                                 try:
@@ -2064,8 +2085,10 @@ def discover_assets(connection_id):
             logger.info('FN:discover_assets total_assets_to_process:{}'.format(len(discovered_assets)))
             
             # For very large discoveries, process in batches to avoid memory issues
-            # Increased batch size for faster processing (3500 assets)
-            batch_size = 2000
+            # Optimized batch size for 4000+ files: smaller batches = better error recovery
+            # Configurable via DISCOVERY_BATCH_SIZE env var, default 1500
+            # 1500 files per batch = ~3 batches for 4000 files, more frequent commits
+            batch_size = int(os.getenv("DISCOVERY_BATCH_SIZE", "1500"))
             total_assets = len(discovered_assets)
             
             if total_assets > 5000:
@@ -2252,7 +2275,19 @@ def discover_assets(connection_id):
                         logger.debug('FN:discover_assets batch_number:{} message:Committed batch'.format(batch_start//batch_size + 1))
                     except Exception as e:
                         logger.error('FN:discover_assets message:Error committing batch error:{}'.format(str(e)), exc_info=True)
-                        db.rollback()
+                        try:
+                            db.rollback()
+                        except Exception as rollback_error:
+                            logger.error('FN:discover_assets message:Error during batch rollback error:{}'.format(str(rollback_error)))
+                            db.close()
+                            db = SessionLocal()
+                        
+                        # Check if it's a connection timeout
+                        error_str = str(e).lower()
+                        if 'timeout' in error_str or 'lost connection' in error_str or 'operationalerror' in error_str:
+                            logger.warning('FN:discover_assets message:Database connection timeout during batch commit, continuing with next batch')
+                            # Continue processing instead of raising
+                            continue
                         raise
             
             logger.info('FN:discover_assets created_count:{} updated_count:{} message:Committing to database'.format(created_count, updated_count))
@@ -2261,7 +2296,27 @@ def discover_assets(connection_id):
                 logger.info('FN:discover_assets total_committed:{} message:Successfully committed assets to database'.format(created_count + updated_count))
             except Exception as e:
                 logger.error('FN:discover_assets message:Error committing assets to database error:{}'.format(str(e)), exc_info=True)
-                db.rollback()
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.error('FN:discover_assets message:Error during rollback error:{}'.format(str(rollback_error)))
+                    # If rollback fails, close the session and create a new one
+                    db.close()
+                    db = SessionLocal()
+                
+                # Check if it's a connection timeout or operational error
+                error_str = str(e).lower()
+                if 'timeout' in error_str or 'lost connection' in error_str or 'operationalerror' in error_str:
+                    # Return partial success instead of raising
+                    logger.warning('FN:discover_assets message:Database connection timeout, returning partial results')
+                    return jsonify({
+                        "message": "Discovery completed but database commit failed due to connection timeout. Some assets may not be saved.",
+                        "created_count": created_count,
+                        "updated_count": updated_count,
+                        "skipped_count": skipped_count,
+                        "error": "Database connection timeout during commit",
+                        "partial_success": True
+                    }), 207  # 207 Multi-Status for partial success
                 raise
             
             total_processed = created_count + updated_count
