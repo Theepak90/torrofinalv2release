@@ -78,18 +78,88 @@ def check_asset_exists(
                 OR JSON_UNQUOTE(JSON_EXTRACT(technical_metadata, '$.storage_path')) = :path
             )
             LIMIT 1
-    Extract file hash and schema hash from asset metadata
+        """)
+        
+        result = db.execute(query, {
+            'connector_id': connector_id,
+            'path': normalized_search_path
+        })
+        
+        row = result.fetchone()
+        if row:
+            asset_id = row[0]
+            return db.query(Asset).filter(Asset.id == asset_id).first()
+        
+    except Exception as e:
+        logger.error(f'FN:check_asset_exists connector_id:{connector_id} storage_path:{storage_path} error:{str(e)}')
+        try:
+            Asset = _get_asset_model()
+            assets = db.query(Asset).filter(
+                Asset.connector_id == connector_id
+            ).all()
+            
+            normalized_search_path = normalize_path(storage_path)
+            for asset in assets:
+                tech_meta = asset.technical_metadata or {}
+                stored_location = tech_meta.get('location') or tech_meta.get('storage_path') or ""
+                normalized_stored = normalize_path(stored_location)
+                
+                if normalized_stored == normalized_search_path:
+                    return asset
+        except:
+            pass
+        return None
+
+
+def get_asset_hashes(asset) -> Tuple[Optional[str], Optional[str]]:
+    tech_meta = asset.technical_metadata or {}
     
-    Returns:
-        Tuple of (file_hash, schema_hash)
-    Compare existing hashes with new hashes
+    file_hash = (
+        tech_meta.get('file_hash') or
+        tech_meta.get('hash', {}).get('value') or
+        None
+    )
     
-    Returns:
-        Tuple of (file_changed, schema_changed)
-    Determine if we should insert/update an asset.
+    schema_hash = tech_meta.get('schema_hash') or None
     
-    Returns:
-        Tuple of (should_insert_or_update, schema_changed)
-    - Only update full record if schema actually changed
-    - For new records, always insert
-    - For existing records with only file_hash change, skip update
+    return file_hash, schema_hash
+
+
+def compare_hashes(
+    existing_file_hash: Optional[str],
+    existing_schema_hash: Optional[str],
+    new_file_hash: str,
+    new_schema_hash: str
+) -> Tuple[bool, bool]:
+    file_changed = existing_file_hash != new_file_hash if existing_file_hash else True
+    schema_changed = existing_schema_hash != new_schema_hash if existing_schema_hash else True
+    
+    return file_changed, schema_changed
+
+
+def should_update_or_insert(
+    existing_asset,
+    new_file_hash: str,
+    new_schema_hash: str
+) -> Tuple[bool, bool]:
+    if not existing_asset:
+        return True, False
+    
+    existing_file_hash, existing_schema_hash = get_asset_hashes(existing_asset)
+    file_changed, schema_changed = compare_hashes(
+        existing_file_hash,
+        existing_schema_hash,
+        new_file_hash,
+        new_schema_hash
+    )
+    
+    if schema_changed:
+        logger.info(f'FN:should_update_or_insert schema_changed:True existing_asset_id:{existing_asset.id}')
+        return True, True
+    
+    if file_changed:
+        logger.info(f'FN:should_update_or_insert file_changed:True schema_changed:False existing_asset_id:{existing_asset.id}')
+        return False, False
+    
+    logger.info(f'FN:should_update_or_insert file_changed:False schema_changed:False existing_asset_id:{existing_asset.id}')
+    return False, False

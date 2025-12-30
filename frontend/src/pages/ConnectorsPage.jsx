@@ -170,7 +170,7 @@ const ConnectorsPage = () => {
       id: 'azure_blob',
       name: 'Azure Data Blob Storage',
       description: 'Connect to Azure Blob Storage and Azure Data Lake Gen2',
-      logo: 'https:
+      logo: 'https://azure.microsoft.com/svghandler/storage/',
       fallbackIcon: <Cloud />,
       color: '#0078D4',
       connectionTypes: ['Connection String', 'Service Principal'],
