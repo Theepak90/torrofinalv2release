@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -47,6 +48,7 @@ import {
 } from '@mui/icons-material';
 
 const AssetsPage = () => {
+  const navigate = useNavigate();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -63,12 +65,12 @@ const AssetsPage = () => {
   const [originalSensitivityLevel, setOriginalSensitivityLevel] = useState('medium');
   const [savingMetadata, setSavingMetadata] = useState(false);
   
-  // Rejection dialog state
+  
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [assetToReject, setAssetToReject] = useState(null);
   
-  // Discovery details dialog state
+  
   const [discoveryDetailsOpen, setDiscoveryDetailsOpen] = useState(false);
   const [discoveryDetails, setDiscoveryDetails] = useState(null);
   
@@ -86,7 +88,7 @@ const AssetsPage = () => {
       setLoading(true);
     try {
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-      // If discovery_id is provided, search by it
+      
       const url = discoveryIdSearch 
         ? `${API_BASE_URL}/api/assets?discovery_id=${discoveryIdSearch}`
         : `${API_BASE_URL}/api/assets`;
@@ -145,17 +147,17 @@ const AssetsPage = () => {
   const getDataSource = (connectorId) => {
     if (!connectorId) return 'Unknown';
     
-    // Parse connector_id format: azure_blob_{connection_name}
+    
     if (connectorId.startsWith('azure_blob_')) {
       return 'Azure Blob Storage';
     }
     
-    // Handle other connector types if needed
+    
     if (connectorId.startsWith('azure_')) {
       return 'Azure Storage';
     }
     
-    // Fallback to connector_id if it doesn't match known patterns
+    
     return connectorId;
   };
 
@@ -170,7 +172,7 @@ const AssetsPage = () => {
   };
 
   const handleApproveAsset = async (assetId) => {
-    // Optimistic update - update UI immediately
+    
     const asset = allAssets.find(a => a.id === assetId);
     if (asset) {
       const updatedAsset = {
@@ -200,7 +202,7 @@ const AssetsPage = () => {
       
       if (response.ok) {
         const result = await response.json();
-        // Update with server response - merge the updated asset data
+        
         const updatedAssetFromServer = {
           ...asset,
           ...result,
@@ -216,11 +218,11 @@ const AssetsPage = () => {
           console.log('Server response - Updated asset:', assetId, updatedAssetFromServer.operational_metadata);
         }
         
-        // Update both allAssets and assets state
+        
         const updatedAllAssets = allAssets.map(a => a.id === assetId ? updatedAssetFromServer : a);
         setAllAssets(updatedAllAssets);
         
-        // Re-filter and update displayed assets
+        
         let filtered = updatedAllAssets;
         if (searchTerm) {
           filtered = filtered.filter(a => 
@@ -245,13 +247,13 @@ const AssetsPage = () => {
         const end = start + pageSize;
         setAssets(filtered.slice(start, end));
       } else {
-        // Revert on error
+        
         await fetchAssets();
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to approve asset');
       }
     } catch (error) {
-      // Revert on error
+      
       await fetchAssets();
       if (import.meta.env.DEV) {
         console.error('Error approving asset:', error);
@@ -275,7 +277,7 @@ const AssetsPage = () => {
     
     setRejectDialogOpen(false);
     
-    // Optimistic update
+    
     const asset = allAssets.find(a => a.id === assetToReject);
     if (asset) {
       const updatedAsset = {
@@ -322,23 +324,26 @@ const AssetsPage = () => {
   };
 
   const handlePublishAsset = async (assetId) => {
-    // Optimistic update
     const asset = allAssets.find(a => a.id === assetId);
-    if (asset) {
-      const updatedAsset = {
-        ...asset,
-        operational_metadata: {
-          ...asset.operational_metadata,
-          publish_status: 'published',
-          published_at: new Date().toISOString()
-        }
-      };
-      setAllAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
-      setAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+    if (!asset) {
+      alert('Asset not found');
+      return;
     }
+
+    const updatedAsset = {
+      ...asset,
+      operational_metadata: {
+        ...asset.operational_metadata,
+        publish_status: 'published',
+        published_at: new Date().toISOString()
+      }
+    };
+    setAllAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
+    setAssets(prev => prev.map(a => a.id === assetId ? updatedAsset : a));
     
     try {
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+      
       const response = await fetch(`${API_BASE_URL}/api/assets/${assetId}/publish`, {
         method: 'POST',
         headers: {
@@ -349,7 +354,39 @@ const AssetsPage = () => {
       
       if (response.ok) {
         const result = await response.json();
+        const discoveryId = result.discovery_id;
+        
+        if (!discoveryId) {
+          throw new Error('Discovery ID not returned from publish endpoint');
+        }
+        
+        const discoveryResponse = await fetch(`${API_BASE_URL}/api/discovery/${discoveryId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!discoveryResponse.ok) {
+          throw new Error('Failed to fetch discovery details');
+        }
+        
+        const discoveryData = await discoveryResponse.json();
+        
+        if (import.meta.env.DEV) {
+          console.log('Full discovery data fetched:', discoveryData);
+          console.log('Discovery data keys:', Object.keys(discoveryData));
+        }
+        
         await fetchAssets();
+        
+        navigate(`/app/dataOnboarding?id=${discoveryId}`, {
+          state: { 
+            discovery: discoveryData,
+            asset: updatedAsset,
+            discoveryId: discoveryId
+          }
+        });
       } else {
         await fetchAssets();
         const errorData = await response.json();
@@ -550,7 +587,7 @@ const AssetsPage = () => {
                 setLoading(true);
                 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
                 
-                // First, get all connections
+                
                 const connectionsResponse = await fetch(`${API_BASE_URL}/api/connections`);
                 if (!connectionsResponse.ok) {
                   throw new Error('Failed to fetch connections');
@@ -560,12 +597,12 @@ const AssetsPage = () => {
                 const azureConnections = connections.filter(conn => conn.connector_type === 'azure_blob');
                 
                 if (azureConnections.length === 0) {
-                  // No connections, just refresh assets
+                  
                   await fetchAssets();
                   return;
                 }
                 
-                // Discover assets from all Azure connections synchronously (immediate results)
+                
                 const discoveryPromises = azureConnections.map(async (connection) => {
                   try {
                     const discoverResponse = await fetch(`${API_BASE_URL}/api/connections/${connection.id}/discover`, {
@@ -574,7 +611,7 @@ const AssetsPage = () => {
                         'Content-Type': 'application/json',
                       },
                       body: JSON.stringify({
-                        containers: [], // Auto-discover all containers
+                        containers: [], 
                         folder_path: '',
                       }),
                     });
@@ -593,10 +630,10 @@ const AssetsPage = () => {
                   }
                 });
                 
-                // Wait for all discoveries to complete
+                
                 await Promise.all(discoveryPromises);
                 
-                // Also trigger Airflow DAG in background for scheduled runs
+                
                 try {
                   await fetch(`${API_BASE_URL}/api/discovery/trigger`, {
                     method: 'POST',
@@ -606,15 +643,15 @@ const AssetsPage = () => {
                     body: JSON.stringify({})
                   });
                 } catch (error) {
-                  // Ignore Airflow trigger errors - synchronous discovery already completed
+                  
                   console.warn('Airflow DAG trigger failed (non-critical):', error);
                 }
                 
-                // Finally, refresh assets to show newly discovered files
+                
                 await fetchAssets();
               } catch (error) {
                 console.error('Error refreshing:', error);
-                // Still try to fetch assets even if discovery fails
+                
                 await fetchAssets();
               } finally {
                 setLoading(false);
@@ -980,18 +1017,18 @@ const AssetsPage = () => {
                     const safeAssetId = technicalMetadata.asset_id || selectedAsset?.id || 'N/A';
                     const safeLocation = technicalMetadata.location || 'N/A';
                     
-                    // Get Size - ensure it's properly fetched from Azure
+                    
                     const safeSizeBytes = technicalMetadata.size_bytes || technicalMetadata.size || 0;
                     
-                    // Get Format - try multiple sources
+                    
                     let safeFormat = technicalMetadata.format;
                     if (!safeFormat || safeFormat === 'unknown') {
-                        // Try to get from file extension
+                        
                         const fileExt = technicalMetadata.file_extension;
                         if (fileExt && fileExt !== 'N/A' && fileExt !== '') {
                             safeFormat = fileExt.replace('.', '').toUpperCase();
                         } else {
-                            // Try content type
+                            
                             const contentType = technicalMetadata.content_type || '';
                             if (contentType.includes('/')) {
                                 safeFormat = contentType.split('/')[1].toUpperCase();
@@ -1007,25 +1044,25 @@ const AssetsPage = () => {
                     const safeLastModified = technicalMetadata.last_modified || safeCreatedAt;
                     const safeFileExtension = technicalMetadata.file_extension || 'N/A';
                     
-                    // Azure-specific properties
+                    
                     const blobType = technicalMetadata.blob_type || 'Block blob';
                     const accessTier = technicalMetadata.access_tier || 'N/A';
                     const etag = technicalMetadata.etag || 'N/A';
                     const contentType = technicalMetadata.content_type || 'N/A';
                     
-                    // Get meaningful storage type (not file format, since Format field shows that)
-                    let storageType = 'Data File'; // Default fallback
                     
-                    // Try to get from storage_location (from discovery, available in asset API response)
+                    let storageType = 'Data File'; 
+                    
+                    
                     const storageLocation = selectedAsset?.storage_location || technicalMetadata.storage_location || {};
                     const storageLocationType = storageLocation.type;
                     
-                    // Or try to infer from connector_id
+                    
                     const connectorId = selectedAsset?.connector_id || '';
                     
-                    // Determine storage type
+                    
                     if (storageLocationType) {
-                        // Map storage location types to user-friendly names
+                        
                         const typeMap = {
                             'azure_blob': 'Azure Blob Storage',
                             'azure_file_share': 'Azure File Share',
@@ -1035,7 +1072,7 @@ const AssetsPage = () => {
                         };
                         storageType = typeMap[storageLocationType] || storageLocationType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                     } else if (connectorId) {
-                        // Parse connector_id format: azure_blob_{name}, azure_file_share_{name}, etc.
+                        
                         if (connectorId.startsWith('azure_blob')) {
                             storageType = 'Azure Blob Storage';
                         } else if (connectorId.startsWith('azure_file_share')) {
@@ -1062,7 +1099,7 @@ const AssetsPage = () => {
                           </Card>
                         </Grid>
                         
-                        {/* Azure Properties - Required Fields */}
+                        {}
                         <Grid item xs={6}>
                           <Card variant="outlined">
                             <CardContent>
@@ -1160,7 +1197,7 @@ const AssetsPage = () => {
                           </Card>
                         </Grid>
                         
-                        {/* Additional Properties */}
+                        {}
                         <Grid item xs={6}>
                           <Card variant="outlined">
                             <CardContent>
@@ -1609,7 +1646,7 @@ const AssetsPage = () => {
         )}
       </Dialog>
 
-      {/* Rejection Reason Dialog */}
+      {}
       <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Reject Asset</DialogTitle>
         <DialogContent>
@@ -1648,7 +1685,7 @@ const AssetsPage = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Discovery Details Dialog */}
+      {}
       <Dialog open={discoveryDetailsOpen} onClose={() => setDiscoveryDetailsOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Discovery Details</DialogTitle>
         <DialogContent>

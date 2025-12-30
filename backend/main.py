@@ -1,7 +1,7 @@
 import sys
 import os
 
-# Check if dependencies are installed (works with or without venv)
+
 try:
     import flask
 except ImportError:
@@ -33,12 +33,12 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sqlalchemy.orm.attributes import flag_modified
 
-# Fix imports for running directly
-# Add current directory to path first
+
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Use absolute imports (works both as module and directly)
-# Import config first to ensure .env is loaded before other modules use it
+
+
 from config import config
 from database import engine, Base, SessionLocal
 from models import Asset, Connection, LineageRelationship, LineageHistory, SQLQuery, DataDiscovery
@@ -52,14 +52,14 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-# Set up logging first
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(name)s %(levelname)s %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Try to import Azure utilities
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from utils.azure_blob_client import AzureBlobClient
@@ -74,7 +74,7 @@ except ImportError as e:
     logger.warning('FN:__init__ message:Azure utilities not available error:{}'.format(str(e)))
     logger.warning('FN:__init__ message:Import error details error:{}'.format(str(e)))
     AZURE_AVAILABLE = False
-    # Try to import anyway for discovery runner
+
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location("azure_blob_client", os.path.join(os.path.dirname(__file__), "utils", "azure_blob_client.py"))
@@ -122,16 +122,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
-    # Only create tables that don't exist - this prevents errors if tables already exist
-    # SQLAlchemy's create_all() should handle this, but we'll catch specific errors
+
+
     from sqlalchemy import inspect
     inspector = inspect(engine)
     existing_tables = inspector.get_table_names()
     
-    # Create all tables (SQLAlchemy will skip existing ones)
+
     Base.metadata.create_all(bind=engine, checkfirst=True)
     
-    # Verify tables exist
+
     new_tables = inspector.get_table_names()
     created_tables = [t for t in new_tables if t not in existing_tables]
     
@@ -143,16 +143,16 @@ try:
     logger.info('FN:__init__ message:Database tables initialized successfully')
 except Exception as e:
     error_msg = str(e)
-    # If error is about existing tables or foreign key constraints, log warning but don't fail
+
     if 'already exists' in error_msg.lower() or 'duplicate' in error_msg.lower():
         logger.warning('FN:__init__ message:Some tables may already exist, continuing: {}'.format(error_msg))
     elif 'foreign key' in error_msg.lower() or '3780' in error_msg or 'incompatible' in error_msg.lower():
-        # Foreign key constraint error - table exists but constraint definition differs
-        # This is OK if tables already exist with correct schema
+
+
         logger.warning('FN:__init__ message:Foreign key constraint issue (tables may already exist): {}'.format(error_msg))
         logger.info('FN:__init__ message:Continuing with existing database schema')
     else:
-        # Other errors should be logged and raised
+
         logger.error('FN:__init__ message:Error initializing database tables error:{}'.format(error_msg))
         raise
 
@@ -172,7 +172,6 @@ def handle_error(f):
 
 @app.route('/health', methods=['GET'])
 def health_simple():
-    """Simple health check endpoint"""
     return "healthy\n", 200
 
 @app.route('/api/health', methods=['GET'])
@@ -218,13 +217,13 @@ def create_connection():
         if not data.get('connector_type'):
             return jsonify({"error": "Connector type is required"}), 400
 
-        # Check if connection with the same name already exists
+
         existing_connection = db.query(Connection).filter(Connection.name == data['name']).first()
         if existing_connection:
             db.close()
             return jsonify({
                 "error": f"A connection with the name '{data['name']}' already exists. Please use a different name or update the existing connection."
-            }), 409  # 409 Conflict
+            }), 409
 
         connection = Connection(
             name=data['name'],
@@ -251,13 +250,13 @@ def create_connection():
     except Exception as e:
         db.rollback()
         logger.error('FN:create_connection error:{}'.format(str(e)), exc_info=True)
-        # Check if it's an IntegrityError (duplicate entry)
+
         error_str = str(e)
         if "Duplicate entry" in error_str or "1062" in error_str or "UNIQUE constraint" in error_str:
             db.close()
             return jsonify({
                 "error": f"A connection with the name '{data.get('name', '')}' already exists. Please use a different name or update the existing connection."
-            }), 409  # 409 Conflict
+            }), 409
         if app.config.get("DEBUG"):
             return jsonify({"error": str(e)}), 400
         else:
@@ -268,7 +267,6 @@ def create_connection():
 @app.route('/api/connections/<int:connection_id>', methods=['PUT'])
 @handle_error
 def update_connection(connection_id):
-    """Update an existing connection"""
     db = SessionLocal()
     try:
         connection = db.query(Connection).filter(Connection.id == connection_id).first()
@@ -279,7 +277,7 @@ def update_connection(connection_id):
         if not data:
             return jsonify({"error": "Request body is required"}), 400
         
-        # Update fields
+
         if 'connection_type' in data:
             connection.connection_type = data['connection_type']
         if 'config' in data:
@@ -314,28 +312,27 @@ def update_connection(connection_id):
 @app.route('/api/connections/<int:connection_id>', methods=['DELETE'])
 @handle_error
 def delete_connection(connection_id):
-    """Delete a connection and all associated assets"""
     db = SessionLocal()
     try:
         connection = db.query(Connection).filter(Connection.id == connection_id).first()
         if not connection:
             return jsonify({"error": "Connection not found"}), 404
 
-        # Build connector_id pattern based on connector type
-        # For azure_blob: connector_id = "azure_blob_{connection_name}"
+
+
         if connection.connector_type == 'azure_blob':
             connector_id_pattern = f"azure_blob_{connection.name}"
         else:
             connector_id_pattern = f"{connection.connector_type}_{connection.name}"
         
-        # Find all assets associated with this connection
+
         associated_assets = db.query(Asset).filter(Asset.connector_id == connector_id_pattern).all()
         asset_ids = [asset.id for asset in associated_assets]
 
-        # Delete lineage relationships that reference these assets (before deleting assets)
-        # This prevents foreign key constraint violations
+
+
         if asset_ids:
-            # LineageRelationship is already imported at the top of the file
+
             lineage_relationships = db.query(LineageRelationship).filter(
                 (LineageRelationship.source_asset_id.in_(asset_ids)) |
                 (LineageRelationship.target_asset_id.in_(asset_ids))
@@ -344,13 +341,13 @@ def delete_connection(connection_id):
                 db.delete(rel)
             logger.debug('FN:delete_connection connection_id:{} deleted_lineage_relationships:{}'.format(connection_id, len(lineage_relationships)))
 
-        # Delete all associated assets
+
         deleted_count = len(associated_assets)
         for asset in associated_assets:
             db.delete(asset)
             logger.debug('FN:delete_connection connection_id:{} asset_id:{} asset_name:{} message:Deleting asset'.format(connection_id, asset.id, asset.name))
 
-        # Delete the connection
+
         connection_name = connection.name
         db.delete(connection)
         db.commit()
@@ -375,7 +372,6 @@ def delete_connection(connection_id):
 @app.route('/api/assets/<asset_id>/quality', methods=['GET'])
 @handle_error
 def get_asset_quality(asset_id):
-    """Get data quality metrics for an asset"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -404,13 +400,12 @@ def get_asset_quality(asset_id):
 @app.route('/api/assets', methods=['GET'])
 @handle_error
 def get_assets():
-    """Get all assets, optionally filtered by discovery_id"""
     db = SessionLocal()
     try:
         discovery_id = request.args.get('discovery_id', type=int)
         
         if discovery_id:
-            # Get asset by discovery_id
+
             discovery = db.query(DataDiscovery).filter(DataDiscovery.id == discovery_id).first()
             if not discovery:
                 return jsonify({"error": "Discovery record not found"}), 404
@@ -438,12 +433,12 @@ def get_assets():
             else:
                 return jsonify({"error": "No asset linked to this discovery_id"}), 404
         
-        # Get all assets with their discovery_id, sorted by discovery_id
-        # Use DISTINCT to avoid duplicates when an asset has multiple discovery records
+
+
         from sqlalchemy import case, func
         
-        # Get the latest discovery_id for each asset (to avoid duplicates)
-        # Subquery to get max discovery_id per asset
+
+
         latest_discovery_subq = db.query(
             DataDiscovery.asset_id,
             func.max(DataDiscovery.id).label('latest_discovery_id')
@@ -451,21 +446,21 @@ def get_assets():
             DataDiscovery.asset_id.isnot(None)
         ).group_by(DataDiscovery.asset_id).subquery()
         
-        # Query assets with their latest discovery record
+
         assets_with_discovery = db.query(Asset, DataDiscovery).outerjoin(
             latest_discovery_subq, Asset.id == latest_discovery_subq.c.asset_id
         ).outerjoin(
             DataDiscovery, DataDiscovery.id == latest_discovery_subq.c.latest_discovery_id
         ).order_by(
-            case((DataDiscovery.id.is_(None), 1), else_=0),  # Put NULLs last
-            DataDiscovery.id.asc(),  # Sort by discovery_id ascending
-            Asset.discovered_at.desc()  # Fallback sort by discovered_at for assets without discovery_id
+            case((DataDiscovery.id.is_(None), 1), else_=0),
+            DataDiscovery.id.asc(),
+            Asset.discovered_at.desc()
         ).all()
         
         result = []
-        seen_asset_ids = set()  # Track unique assets to avoid duplicates
+        seen_asset_ids = set()
         for asset, discovery in assets_with_discovery:
-            # Skip if we've already added this asset (safety check)
+
             if asset.id in seen_asset_ids:
                 continue
             seen_asset_ids.add(asset.id)
@@ -494,41 +489,40 @@ def get_assets():
 @app.route('/api/discovery/<int:discovery_id>', methods=['GET'])
 @handle_error
 def get_discovery_by_id(discovery_id):
-    """Get discovery record and associated asset by discovery_id - returns exact schema as requested"""
     db = SessionLocal()
     try:
         discovery = db.query(DataDiscovery).filter(DataDiscovery.id == discovery_id).first()
         if not discovery:
             return jsonify({"error": "Discovery record not found"}), 404
         
-        # Extract file metadata fields
+
         file_metadata = discovery.file_metadata or {}
         file_basic = file_metadata.get("basic", {})
         file_hash_obj = file_metadata.get("hash", {})
         file_timestamps = file_metadata.get("timestamps", {})
         
-        # Extract storage location fields
+
         storage_location = discovery.storage_location or {}
         storage_connection = storage_location.get("connection", {})
         storage_container = storage_location.get("container", {})
         
-        # Extract storage metadata
+
         storage_metadata = discovery.storage_metadata or {}
         azure_storage_metadata = storage_metadata.get("azure", {})
         
-        # Format dates in RFC 2822 format (like "Thu, 25 Dec 2025 16:22:13 GMT")
+
         def format_rfc2822(dt):
             if not dt:
                 return None
             if isinstance(dt, str):
                 try:
-                    # Try parsing ISO format
+
                     if 'T' in dt:
                         if dt.endswith('Z'):
                             dt = dt.replace('Z', '+00:00')
                         dt = datetime.fromisoformat(dt)
                     else:
-                        # Try simple date format
+
                         try:
                             dt = datetime.strptime(dt, '%Y-%m-%d')
                         except:
@@ -536,13 +530,13 @@ def get_discovery_by_id(discovery_id):
                 except:
                     return dt
             if hasattr(dt, 'strftime'):
-                # Convert to UTC if timezone-aware, otherwise assume UTC
+
                 if dt.tzinfo is not None:
                     dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                 return dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
             return None
         
-        # Build result matching exact schema
+
         result = {
             "id": discovery.id,
             "additional_metadata": discovery.additional_metadata,
@@ -588,22 +582,22 @@ def get_discovery_by_id(discovery_id):
             "validation_status": discovery.validation_status
         }
         
-        # Ensure schema_json has all required fields from example
+
         if not result["schema_json"] or not isinstance(result["schema_json"], dict):
             result["schema_json"] = {"columns": [], "num_columns": 0}
         
         schema_json = result["schema_json"]
         
-        # Ensure schema_json has all fields from example structure
+
         if "delimiter" not in schema_json:
-            # Try to extract from file_metadata format_specific first
+
             format_specific = file_metadata.get("format_specific", {})
             csv_info = format_specific.get("csv", {})
             if csv_info:
                 schema_json["delimiter"] = csv_info.get("delimiter", ",")
                 schema_json["has_header"] = csv_info.get("has_header", True)
             else:
-                # Try to infer from file extension
+
                 file_format = file_basic.get("format", "").lower()
                 if file_format == "csv":
                     schema_json["delimiter"] = ","
@@ -612,15 +606,15 @@ def get_discovery_by_id(discovery_id):
                     schema_json["delimiter"] = None
                     schema_json["has_header"] = None
         
-        # Ensure has_header exists
+
         if "has_header" not in schema_json:
             schema_json["has_header"] = None
         
-        # Ensure num_rows and sample_rows_count exist
+
         if "num_rows" not in schema_json:
             schema_json["num_rows"] = None
         if "sample_rows_count" not in schema_json:
-            # Count sample values from columns if available
+
             columns = schema_json.get("columns", [])
             if columns and len(columns) > 0:
                 first_col = columns[0]
@@ -629,17 +623,17 @@ def get_discovery_by_id(discovery_id):
             else:
                 schema_json["sample_rows_count"] = None
         
-        # Ensure num_columns is set
+
         if "num_columns" not in schema_json:
             schema_json["num_columns"] = len(schema_json.get("columns", []))
         
-        # Ensure file_metadata has format_specific if missing
+
         if not result["file_metadata"] or not isinstance(result["file_metadata"], dict):
             result["file_metadata"] = {}
         
         file_meta = result["file_metadata"]
         if "format_specific" not in file_meta:
-            # Try to build format_specific from file extension
+
             file_format = file_basic.get("format", "").lower()
             format_specific = {}
             if file_format == "csv":
@@ -655,13 +649,13 @@ def get_discovery_by_id(discovery_id):
             else:
                 file_meta["format_specific"] = {}
         
-        # Ensure storage_location has metadata key
+
         if result["storage_location"] and isinstance(result["storage_location"], dict):
             if "metadata" not in result["storage_location"]:
                 result["storage_location"]["metadata"] = {}
         
-        # Ensure discovery_info has proper structure (batch, scan, source)
-        # If discovery_info has old structure, preserve it but ensure it's a dict
+
+
         if not result["discovery_info"] or not isinstance(result["discovery_info"], dict):
             result["discovery_info"] = {}
         
@@ -675,7 +669,6 @@ def get_discovery_by_id(discovery_id):
 @app.route('/api/discovery', methods=['GET'])
 @handle_error
 def list_discoveries():
-    """List all discovery records with optional filtering"""
     db = SessionLocal()
     try:
         status_filter = request.args.get('status')
@@ -706,7 +699,7 @@ def list_discoveries():
                 "storage_path": discovery.storage_location.get("path") if discovery.storage_location else None,
             }
             
-            # Get associated asset if available
+
             if discovery.asset_id:
                 asset = db.query(Asset).filter(Asset.id == discovery.asset_id).first()
                 if asset:
@@ -733,7 +726,6 @@ def list_discoveries():
 @app.route('/api/discovery/<int:discovery_id>/approve', methods=['PUT'])
 @handle_error
 def approve_discovery(discovery_id):
-    """Approve a discovery record by discovery_id"""
     db = SessionLocal()
     try:
         discovery = db.query(DataDiscovery).filter(DataDiscovery.id == discovery_id).first()
@@ -749,7 +741,7 @@ def approve_discovery(discovery_id):
         discovery.approval_workflow["approved_by"] = "user"
         flag_modified(discovery, "approval_workflow")
         
-        # Also update associated asset if available
+
         if discovery.asset_id:
             asset = db.query(Asset).filter(Asset.id == discovery.asset_id).first()
             if asset:
@@ -783,7 +775,6 @@ def approve_discovery(discovery_id):
 @app.route('/api/discovery/<int:discovery_id>/reject', methods=['PUT'])
 @handle_error
 def reject_discovery(discovery_id):
-    """Reject a discovery record by discovery_id"""
     db = SessionLocal()
     try:
         discovery = db.query(DataDiscovery).filter(DataDiscovery.id == discovery_id).first()
@@ -803,7 +794,7 @@ def reject_discovery(discovery_id):
         discovery.approval_workflow["rejection_reason"] = reason
         flag_modified(discovery, "approval_workflow")
         
-        # Also update associated asset if available
+
         if discovery.asset_id:
             asset = db.query(Asset).filter(Asset.id == discovery.asset_id).first()
             if asset:
@@ -839,24 +830,23 @@ def reject_discovery(discovery_id):
 @app.route('/api/discovery/stats', methods=['GET'])
 @handle_error
 def get_discovery_stats():
-    """Get discovery statistics"""
     db = SessionLocal()
     try:
         total = db.query(DataDiscovery).count()
         by_status = {}
         by_approval_status = {}
         
-        # Count by status
+
         statuses = db.query(DataDiscovery.status, func.count(DataDiscovery.id)).group_by(DataDiscovery.status).all()
         for status, count in statuses:
             by_status[status or "unknown"] = count
         
-        # Count by approval_status
+
         approval_statuses = db.query(DataDiscovery.approval_status, func.count(DataDiscovery.id)).group_by(DataDiscovery.approval_status).all()
         for approval_status, count in approval_statuses:
             by_approval_status[approval_status or "unknown"] = count
         
-        # Recent discoveries (last 7 days)
+
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
         recent_count = db.query(DataDiscovery).filter(DataDiscovery.discovered_at >= seven_days_ago).count()
         
@@ -875,12 +865,11 @@ def get_discovery_stats():
 @app.route('/api/discovery/trigger', methods=['POST'])
 @handle_error
 def trigger_discovery():
-    """Trigger Airflow DAG for discovery - can be called without connection_id to trigger all"""
     try:
         data = request.json or {}
-        connection_id = data.get('connection_id')  # Optional
+        connection_id = data.get('connection_id')
         
-        # Trigger Airflow DAG
+
         airflow_triggered = False
         try:
             airflow_base_url = app.config.get("AIRFLOW_BASE_URL")
@@ -894,7 +883,7 @@ def trigger_discovery():
             import requests
             from requests.auth import HTTPBasicAuth
             
-            # Use Airflow CLI instead of REST API (more reliable with session auth)
+
             import subprocess
             import os as os_module
             
@@ -902,15 +891,15 @@ def trigger_discovery():
             if connection_id:
                 note += f" for connection_id: {connection_id}"
             
-            # Set AIRFLOW_HOME and use CLI to trigger DAG
-            # Use relative path: airflow directory is sibling to backend directory
+
+
             default_airflow_home = os.path.join(os.path.dirname(os.path.dirname(__file__)), "airflow")
             airflow_home = app.config.get("AIRFLOW_HOME", default_airflow_home)
             airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
             env = os_module.environ.copy()
             env["AIRFLOW_HOME"] = airflow_home
             
-            # Use airflow dags trigger command (note: --note is not supported in CLI, use --conf instead)
+
             conf_json = f'{{"note": "{note}"}}'
             result = subprocess.run(
                 [airflow_bin, "dags", "trigger", dag_id, "--conf", conf_json],
@@ -926,7 +915,7 @@ def trigger_discovery():
                 logger.info(f'FN:trigger_discovery airflow_dag_triggered:{dag_id} connection_id:{connection_id}')
             else:
                 logger.warning(f'FN:trigger_discovery airflow_trigger_failed:returncode:{result.returncode} stderr:{result.stderr}')
-                # Don't fail the request - just log the warning
+
                 airflow_triggered = False
         except Exception as e:
             logger.error(f'FN:trigger_discovery airflow_trigger_error:{str(e)}')
@@ -967,7 +956,7 @@ def create_assets():
             if not asset_data.get('type'):
                 return jsonify({"error": "Asset type is required"}), 400
 
-            # Check if asset already exists (deduplication)
+
             existing_asset = db.query(Asset).filter(Asset.id == asset_data['id']).first()
             if existing_asset:
                 logger.warning('FN:create_assets asset_id:{} message:Asset already exists, skipping'.format(asset_data['id']))
@@ -1025,14 +1014,13 @@ def create_assets():
 @app.route('/api/assets/<asset_id>', methods=['GET'])
 @handle_error
 def get_asset_by_id(asset_id):
-    """Get asset by ID with all metadata for view button"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
         if not asset:
             return jsonify({"error": "Asset not found"}), 404
         
-        # Get latest discovery record for this asset
+
         discovery = db.query(DataDiscovery).filter(
             DataDiscovery.asset_id == asset_id
         ).order_by(DataDiscovery.id.desc()).first()
@@ -1050,7 +1038,7 @@ def get_asset_by_id(asset_id):
             "business_metadata": asset.business_metadata or {}
         }
         
-        # Add discovery information if available
+
         if discovery:
             result["discovery_id"] = discovery.id
             result["discovery_status"] = discovery.status
@@ -1137,7 +1125,6 @@ def not_found(error):
 @app.route('/api/connections/<int:connection_id>/list-files', methods=['GET'])
 @handle_error
 def list_connection_files(connection_id):
-    """List all files/blobs from an Azure Storage connection"""
     db = SessionLocal()
     try:
         connection = db.query(Connection).filter(Connection.id == connection_id).first()
@@ -1149,20 +1136,20 @@ def list_connection_files(connection_id):
         
         config_data = connection.config or {}
         
-        # Get query parameters
+
         container_name = request.args.get('container')
-        share_name = request.args.get('share')  # For file shares
+        share_name = request.args.get('share')
         folder_path = request.args.get('folder_path', '')
         file_extensions = request.args.get('file_extensions')
         file_extensions_list = [ext.strip() for ext in file_extensions.split(',')] if file_extensions else None
         
-        # Create Azure Blob Client (supports both connection string and service principal)
+
         if AZURE_AVAILABLE:
             try:
                 from utils.azure_blob_client import create_azure_blob_client
                 blob_client = create_azure_blob_client(config_data)
                 
-                # If neither container nor share specified, list all services
+
                 if not container_name and not share_name:
                     containers = blob_client.list_containers()
                     file_shares = blob_client.list_file_shares()
@@ -1173,7 +1160,7 @@ def list_connection_files(connection_id):
                         "message": "Specify 'container' or 'share' parameter to list files. Available services listed above."
                     }), 200
                 
-                # Handle file share listing
+
                 if share_name:
                     files = blob_client.list_file_share_files(
                         share_name=share_name,
@@ -1181,26 +1168,26 @@ def list_connection_files(connection_id):
                         file_extensions=file_extensions_list
                     )
                 else:
-                    # Check if this is a Data Lake Gen2 connection
+
                     is_datalake = config_data.get('storage_type') == 'datalake' or config_data.get('use_dfs_endpoint', False)
                     
-                    # Use Data Lake API for Data Lake Gen2, blob API for regular blob storage
+
                     if is_datalake and hasattr(blob_client, 'list_datalake_files'):
-                        # Use Data Lake Gen2 API (matches 'az storage fs file list')
+
                         files = blob_client.list_datalake_files(
                             file_system_name=container_name,
                             path=folder_path,
                             file_extensions=file_extensions_list
                         )
                     else:
-                        # Use blob API for regular blob storage
+
                         files = blob_client.list_blobs(
                             container_name=container_name,
                             folder_path=folder_path,
                             file_extensions=file_extensions_list
                         )
                 
-                # Format response
+
                 files_list = []
                 for file_info in files:
                     files_list.append({
@@ -1250,11 +1237,6 @@ def list_connection_files(connection_id):
 @app.route('/api/connections/test-config', methods=['GET', 'POST'])
 @handle_error
 def test_connection_config():
-    """Test a connection configuration WITHOUT saving it to database
-    Supports both GET and POST methods:
-    - POST: config in request body as JSON: {"config": {...}}
-    - GET: config as JSON string in query param 'config', or individual query params
-    """
     if not AZURE_AVAILABLE:
         return jsonify({"error": "Azure utilities not available"}), 503
     
@@ -1262,14 +1244,14 @@ def test_connection_config():
         config_data = {}
         
         if request.method == 'POST':
-            # POST: Get config from request body
+
             data = request.json
             if not data:
                 return jsonify({"error": "Request body is required"}), 400
             config_data = data.get('config', {})
         else:
-            # GET: Get config from query parameters
-            # Option 1: config as JSON string in query param
+
+
             config_json_str = request.args.get('config')
             if config_json_str:
                 try:
@@ -1278,7 +1260,7 @@ def test_connection_config():
                 except json.JSONDecodeError:
                     return jsonify({"error": "Invalid JSON in 'config' query parameter"}), 400
             else:
-                # Option 2: Individual query parameters (for simple configs)
+
                 config_data = {
                     'connection_string': request.args.get('connection_string'),
                     'account_name': request.args.get('account_name'),
@@ -1289,19 +1271,19 @@ def test_connection_config():
                     'storage_type': request.args.get('storage_type'),
                     'use_dfs_endpoint': request.args.get('use_dfs_endpoint', '').lower() == 'true',
                 }
-                # Remove None values
+
                 config_data = {k: v for k, v in config_data.items() if v is not None}
         
         if not config_data:
             return jsonify({"error": "Config is required. For GET, provide 'config' query param as JSON string or individual params"}), 400
         
-        # Test the connection using the provided config
+
         try:
             from utils.azure_blob_client import create_azure_blob_client
             blob_client = create_azure_blob_client(config_data)
             test_result = blob_client.test_connection()
             
-            # Return test result (don't save anything)
+
             return jsonify(test_result), 200
         except ValueError as e:
             return jsonify({"success": False, "message": str(e)}), 200
@@ -1315,7 +1297,6 @@ def test_connection_config():
 @app.route('/api/connections/<int:connection_id>/test', methods=['POST'])
 @handle_error
 def test_connection(connection_id):
-    """Test an Azure Blob Storage connection and trigger discovery"""
     db = SessionLocal()
     try:
         connection = db.query(Connection).filter(Connection.id == connection_id).first()
@@ -1327,7 +1308,7 @@ def test_connection(connection_id):
         
         config_data = connection.config or {}
         
-        # Create Azure Blob Client (supports both connection string and service principal)
+
         if AZURE_AVAILABLE:
             try:
                 from utils.azure_blob_client import create_azure_blob_client
@@ -1337,10 +1318,10 @@ def test_connection(connection_id):
                 if not test_result.get("success"):
                     return jsonify(test_result), 200
                 
-                # Connection successful - trigger Airflow DAG
+
                 airflow_triggered = False
                 try:
-                    # Try to trigger Airflow DAG via REST API
+
                     airflow_base_url = app.config.get("AIRFLOW_BASE_URL")
                     if not airflow_base_url:
                         logger.warning('FN:test_connection AIRFLOW_BASE_URL not set, skipping Airflow trigger')
@@ -1354,19 +1335,19 @@ def test_connection(connection_id):
                         }), 200
                     dag_id = "azure_blob_discovery"
                     
-                    # Use Airflow CLI instead of REST API (more reliable with session auth)
+
                     import subprocess
                     import os as os_module
                     
-                    # Set AIRFLOW_HOME and use CLI to trigger DAG
-                    # Use relative path: airflow directory is sibling to backend directory
+
+
                     default_airflow_home = os.path.join(os.path.dirname(os.path.dirname(__file__)), "airflow")
                     airflow_home = app.config.get("AIRFLOW_HOME", default_airflow_home)
                     airflow_bin = os.path.join(airflow_home, "venv", "bin", "airflow")
                     env = os_module.environ.copy()
                     env["AIRFLOW_HOME"] = airflow_home
                     
-                    # Use airflow dags trigger command (note: --note is not supported in CLI, use --conf instead)
+
                     conf_json = f'{{"note": "Triggered from connection test: {connection_id}"}}'
                     result = subprocess.run(
                         [airflow_bin, "dags", "trigger", dag_id, "--conf", conf_json],
@@ -1384,7 +1365,7 @@ def test_connection(connection_id):
                         logger.warning(f'FN:test_connection connection_id:{connection_id} airflow_trigger_failed:returncode:{result.returncode} stderr:{result.stderr}')
                 except Exception as e:
                     logger.warning(f'FN:test_connection connection_id:{connection_id} airflow_trigger_error:{str(e)}')
-                    # Fallback: trigger discovery directly
+
                     try:
                         import threading
                         import importlib.util
@@ -1418,7 +1399,7 @@ def test_connection(connection_id):
                     "container_count": 0
                 }), 200
         else:
-            # Azure utilities not available - try to trigger discovery anyway via Airflow DAG logic
+
             import threading
             import importlib.util
             
@@ -1450,7 +1431,6 @@ def test_connection(connection_id):
 @app.route('/api/connections/<int:connection_id>/containers', methods=['GET'])
 @handle_error
 def list_containers(connection_id):
-    """List all Azure Storage services (containers, file shares, queues, tables) for a connection"""
     if not AZURE_AVAILABLE:
         return jsonify({"error": "Azure utilities not available"}), 503
     
@@ -1469,7 +1449,7 @@ def list_containers(connection_id):
             from utils.azure_blob_client import create_azure_blob_client
             blob_client = create_azure_blob_client(config_data)
             
-            # Discover all Azure Storage services
+
             containers = blob_client.list_containers()
             file_shares = blob_client.list_file_shares()
             queues = blob_client.list_queues()
@@ -1489,29 +1469,27 @@ def list_containers(connection_id):
         db.close()
 
 def clean_for_json(obj):
-    """Recursively clean object to ensure JSON serializability"""
     import base64
     if isinstance(obj, dict):
         return {k: clean_for_json(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [clean_for_json(item) for item in obj]
     elif isinstance(obj, (bytes, bytearray)):
-        # Convert bytearray/bytes to base64 string
+
         return base64.b64encode(obj).decode('utf-8')
     elif isinstance(obj, (datetime,)):
         return obj.isoformat()
-    elif hasattr(obj, 'isoformat'):  # datetime-like objects
+    elif hasattr(obj, 'isoformat'):
         return obj.isoformat()
     else:
-        # Try to convert to string if it's not a basic type
+
         try:
-            json.dumps(obj)  # Test if it's JSON serializable
+            json.dumps(obj)
             return obj
         except (TypeError, ValueError):
             return str(obj)
 
 def build_technical_metadata(asset_id, blob_info, file_extension, blob_path, container_name, storage_account, file_hash, schema_hash, metadata, current_date):
-    """Build technical metadata from Azure Blob properties"""
     created_at = blob_info.get("created_at")
     if created_at and hasattr(created_at, 'isoformat'):
         created_at = created_at.isoformat()
@@ -1524,50 +1502,50 @@ def build_technical_metadata(asset_id, blob_info, file_extension, blob_path, con
     elif last_modified:
         last_modified = str(last_modified)
     
-    # Get Azure metadata (key-value pairs) and clean it
+
     azure_metadata_dict = blob_info.get("metadata", {})
     if not isinstance(azure_metadata_dict, dict):
         azure_metadata_dict = {}
-    # Clean metadata to ensure JSON serializability
+
     azure_metadata_dict = clean_for_json(azure_metadata_dict)
     
-    # Ensure file_hash and schema_hash are strings
+
     file_hash_str = str(file_hash) if file_hash else ""
     schema_hash_str = str(schema_hash) if schema_hash else ""
     
-    # Get size from Azure - blob_info should already have size from azure_properties merge
-    # When enhanced_blob_info = {**blob_info, **azure_properties}, size from azure_properties overrides
+
+
     size_bytes = blob_info.get("size") or blob_info.get("size_bytes") or 0
-    # Ensure size_bytes is an integer, not None or empty string
+
     if size_bytes is None or size_bytes == "":
         size_bytes = 0
     try:
         size_bytes = int(size_bytes)
-        # Log if size is 0 to help debug
+
         if size_bytes == 0:
             logger.warning('FN:build_technical_metadata blob_path:{} message:Size is 0, may indicate missing size from Azure'.format(blob_path))
     except (ValueError, TypeError) as e:
         logger.warning('FN:build_technical_metadata blob_path:{} size_value:{} message:Could not convert size to int error:{}'.format(blob_path, size_bytes, str(e)))
         size_bytes = 0
     
-    # Get format - try to determine from file extension or content type
+
     format_value = file_extension or "unknown"
     if format_value == "unknown" or not format_value:
-        # Try to extract from content type
+
         content_type = blob_info.get("content_type", "")
         if content_type and "/" in content_type:
             format_value = content_type.split("/")[-1]
         elif content_type:
             format_value = content_type
     
-    # Build technical metadata dict
+
     tech_meta = {
         "asset_id": asset_id,
         "asset_type": file_extension or "blob",
         "format": format_value,
         "content_type": blob_info.get("content_type", "application/octet-stream"),
         "size_bytes": size_bytes,
-        "size": size_bytes,  # Also include as 'size' for compatibility
+        "size": size_bytes,
         "location": blob_path,
         "container": container_name,
         "storage_account": storage_account,
@@ -1576,7 +1554,7 @@ def build_technical_metadata(asset_id, blob_info, file_extension, blob_path, con
         "file_extension": f".{file_extension}" if file_extension else "",
         "file_hash": file_hash_str,
         "schema_hash": schema_hash_str,
-        # Azure-specific properties (required fields)
+
         "etag": blob_info.get("etag", "").strip('"') if blob_info.get("etag") else None,
         "blob_type": blob_info.get("blob_type", "Block blob"),
         "access_tier": blob_info.get("access_tier"),
@@ -1587,25 +1565,24 @@ def build_technical_metadata(asset_id, blob_info, file_extension, blob_path, con
         "cache_control": blob_info.get("cache_control"),
         "content_md5": blob_info.get("content_md5"),
         "content_disposition": blob_info.get("content_disposition"),
-        # Azure metadata (key-value pairs)
+
         "azure_metadata": azure_metadata_dict,
-        # Format-specific metadata
+
         **metadata.get("file_metadata", {}).get("format_specific", {}),
-        # Additional storage metadata
+
         "azure_storage_metadata": metadata.get("storage_metadata", {}).get("azure", {})
     }
     
-    # Clean entire technical metadata to ensure JSON serializability
+
     return clean_for_json(tech_meta)
 
 def build_operational_metadata(azure_properties, current_date):
-    """Build operational metadata from Azure Blob properties"""
-    # Extract owner from Azure metadata if available
+
     owner = azure_properties.get("metadata", {}).get("owner") if azure_properties else None
     if not owner:
         owner = "system"
     
-    # Extract access level from Azure properties
+
     access_level = "internal"
     if azure_properties:
         lease_status = azure_properties.get("lease_status")
@@ -1616,7 +1593,7 @@ def build_operational_metadata(azure_properties, current_date):
         elif azure_properties.get("access_tier") == "Archive":
             access_level = "archived"
     
-    # Clean and ensure all values are JSON serializable
+
     return clean_for_json({
         "owner": str(owner),
         "created_by": str(azure_properties.get("metadata", {}).get("created_by", "azure_blob_discovery") if azure_properties else "azure_blob_discovery"),
@@ -1624,40 +1601,39 @@ def build_operational_metadata(azure_properties, current_date):
         "last_updated_at": current_date,
         "access_level": access_level,
         "approval_status": "pending_review",
-        # Azure operational properties
+
         "lease_status": azure_properties.get("lease_status") if azure_properties else None,
         "access_tier": azure_properties.get("access_tier") if azure_properties else None,
         "etag": azure_properties.get("etag", "").strip('"') if azure_properties and azure_properties.get("etag") else None
     })
 
 def build_business_metadata(blob_info, azure_properties, file_extension, container_name):
-    """Build business metadata from Azure Blob properties and metadata tags"""
     azure_metadata = azure_properties.get("metadata", {}) if azure_properties else {}
     
-    # Clean azure_metadata to ensure JSON serializability
+
     azure_metadata = clean_for_json(azure_metadata)
     
-    # Extract business metadata from Azure blob metadata tags
+
     description = azure_metadata.get("description") or f"Azure Blob Storage file: {blob_info.get('name', 'unknown')}"
     business_owner = azure_metadata.get("business_owner") or azure_metadata.get("owner") or "system"
     department = azure_metadata.get("department") or "Data Engineering"
     classification = azure_metadata.get("classification") or "internal"
     sensitivity_level = azure_metadata.get("sensitivity_level") or azure_metadata.get("sensitivity") or "medium"
     
-    # Extract tags from Azure metadata
+
     tags = []
     if azure_metadata.get("tags"):
         tags_value = azure_metadata["tags"]
         if isinstance(tags_value, str):
             tags = [t.strip() for t in tags_value.split(",")]
         elif isinstance(tags_value, list):
-            tags = [str(t) for t in tags_value]  # Ensure all tags are strings
+            tags = [str(t) for t in tags_value]
     
-    # Add container name as a tag
+
     if container_name and container_name not in tags:
         tags.append(container_name)
     
-    # Clean all values to ensure JSON serializability
+
     return clean_for_json({
         "description": str(description),
         "data_type": file_extension or "unknown",
@@ -1666,7 +1642,7 @@ def build_business_metadata(blob_info, azure_properties, file_extension, contain
         "classification": str(classification),
         "sensitivity_level": str(sensitivity_level),
         "tags": tags,
-        # Additional Azure metadata
+
         "container": container_name,
         "content_language": azure_properties.get("content_language") if azure_properties else None,
         "azure_metadata_tags": azure_metadata
@@ -1675,11 +1651,6 @@ def build_business_metadata(blob_info, azure_properties, file_extension, contain
 @app.route('/api/connections/<int:connection_id>/discover', methods=['POST'])
 @handle_error
 def discover_assets(connection_id):
-    """Discover assets from Azure Blob Storage
-    
-    For large-scale discovery (>1000 assets), this runs synchronously but processes in batches.
-    Consider using background workers for very large discoveries (>10k assets).
-    """
     if not AZURE_AVAILABLE:
         return jsonify({"error": "Azure utilities not available"}), 503
     
@@ -1697,14 +1668,14 @@ def discover_assets(connection_id):
         containers = data.get('containers', config_data.get('containers', []))
         folder_path = data.get('folder_path', config_data.get('folder_path', ''))
         
-        # Create Azure Blob Client (supports both connection string and service principal)
+
         try:
             from utils.azure_blob_client import create_azure_blob_client
             blob_client = create_azure_blob_client(config_data)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         
-        # Auto-discover all containers if none specified
+
         if not containers:
             try:
                 containers_list = blob_client.list_containers()
@@ -1719,13 +1690,12 @@ def discover_assets(connection_id):
         
         try:
             discovered_assets = []
-            folders_found = {}  # Track folders per container
-            assets_by_folder = {}  # Track assets per folder
+            folders_found = {}
+            assets_by_folder = {}
             discovered_assets_lock = Lock()
             folders_lock = Lock()
             
             def process_container(container_name):
-                """Process a single container with all its blobs"""
                 container_discovered_assets = []
                 container_folders_found = set()
                 container_assets_by_folder = {}
@@ -1734,10 +1704,10 @@ def discover_assets(connection_id):
                 try:
                     logger.info('FN:discover_assets container_name:{} folder_path:{} message:Listing files'.format(container_name, folder_path))
                     
-                    # Use Data Lake API for Data Lake Gen2, blob API for regular blob storage
+
                     is_datalake = config_data.get('storage_type') == 'datalake' or config_data.get('use_dfs_endpoint', False)
                     if is_datalake and hasattr(blob_client, 'list_datalake_files'):
-                        # Use Data Lake Gen2 API for better metadata and hierarchical support
+
                         blobs = blob_client.list_datalake_files(
                             file_system_name=container_name,
                             path=folder_path,
@@ -1745,7 +1715,7 @@ def discover_assets(connection_id):
                         )
                         logger.info('FN:discover_assets container_name:{} message:Using Data Lake Gen2 API'.format(container_name))
                     else:
-                        # Use regular blob API
+
                         blobs = blob_client.list_blobs(
                             container_name=container_name,
                             folder_path=folder_path,
@@ -1755,17 +1725,17 @@ def discover_assets(connection_id):
                     
                     logger.info('FN:discover_assets container_name:{} blob_count:{}'.format(container_name, len(blobs)))
                     
-                    # Group blobs by folder
+
                     folders_in_container = set()
                     assets_in_folders = {}
                     
                     for blob_info in blobs:
                         blob_path = blob_info["full_path"]
-                        # Extract folder path (everything before the last /)
+
                         if "/" in blob_path:
                             folder = "/".join(blob_path.split("/")[:-1])
                         else:
-                            folder = ""  # Root of container
+                            folder = ""
                         
                         folders_in_container.add(folder)
                         if folder not in assets_in_folders:
@@ -1781,26 +1751,25 @@ def discover_assets(connection_id):
                         sample_names = [b.get('name', 'unknown') for b in blobs[:5]]
                         logger.info('FN:discover_assets container_name:{} sample_blob_names:{}'.format(container_name, sample_names))
                     
-                    # OPTIMIZED: Scale workers based on file count for better performance
-                    # For 4000 files: use 60 workers (optimal for I/O-bound operations)
-                    # Balance between concurrency and resource usage
+
+
+
                     if len(blobs) > 2000:
-                        max_workers = 60  # High concurrency for very large discoveries
+                        max_workers = 60
                     elif len(blobs) > 500:
-                        max_workers = 50  # Medium-high for large discoveries
+                        max_workers = 50
                     else:
-                        max_workers = 20  # Lower for small discoveries
+                        max_workers = 20
                     logger.info('FN:discover_assets container_name:{} total_blobs:{} message:Processing with {} concurrent workers'.format(container_name, len(blobs), max_workers))
                     
                     def process_blob(blob_info):
-                        """Process a single blob and return asset data"""
                         try:
                             blob_path = blob_info["full_path"]
                             blob_name = blob_info.get("name", "")
                             file_extension = blob_name.split(".")[-1].lower() if blob_name and "." in blob_name else ""
                             connector_id = f"azure_blob_{connection.name}"
                             
-                            # Track asset for response
+
                             asset_name = blob_info.get("name", "unknown")
                             asset_folder = ""
                             if "/" in blob_path:
@@ -1808,22 +1777,22 @@ def discover_assets(connection_id):
                                 asset_folder = "/".join(parts[:-1])
                                 asset_name = parts[-1]
                             
-                            # Create a new database session for this thread
+
                             thread_db = SessionLocal()
                             try:
-                                # Deduplication: Only check for existing assets if this is a refresh (not initial discovery)
-                                # Check if there are any existing assets for this connection to determine if it's a refresh
+
+
                                 existing_asset = None
                                 if AZURE_AVAILABLE:
-                                    # Only do deduplication if this connection already has assets (refresh scenario)
-                                    # For initial discovery, skip deduplication to create all assets
+
+
                                     try:
-                                        # Quick check: see if any assets exist for this connector
+
                                         existing_assets_count = thread_db.query(Asset).filter(
                                             Asset.connector_id == connector_id
                                         ).count()
                                         
-                                        # Only do deduplication if assets already exist (this is a refresh)
+
                                         if existing_assets_count > 0:
                                             existing_asset = check_asset_exists(thread_db, connector_id, blob_path)
                                             if existing_asset:
@@ -1832,12 +1801,12 @@ def discover_assets(connection_id):
                                             logger.debug('FN:discover_assets connector_id:{} message:Initial discovery - skipping deduplication'.format(connector_id))
                                     except Exception as e:
                                         logger.error('FN:discover_assets blob_path:{} error:check_asset_exists failed error:{}'.format(blob_path, str(e)))
-                                        # Continue without deduplication if check fails (shouldn't happen, but be safe)
+
                                         existing_asset = None
                                 
-                                # OPTIMIZED: Use properties from list_blobs() instead of making extra API calls
-                                # list_blobs() already returns all properties we need, avoiding 4000+ extra API calls
-                                # This significantly improves performance for large discoveries
+
+
+
                                 azure_properties = {
                                     "etag": blob_info.get("etag", ""),
                                     "size": blob_info.get("size", 0),
@@ -1852,8 +1821,8 @@ def discover_assets(connection_id):
                                     "metadata": blob_info.get("metadata", {})
                                 }
                                 
-                                # Only fetch additional properties if critical metadata is missing
-                                # For 4000 files, this avoids 4000+ redundant API calls
+
+
                                 if not azure_properties.get("size") or not azure_properties.get("last_modified"):
                                     try:
                                         additional_props = blob_client.get_blob_properties(container_name, blob_path)
@@ -1863,45 +1832,45 @@ def discover_assets(connection_id):
                                     except Exception as e:
                                         logger.debug('FN:discover_assets container_name:{} blob_path:{} message:Using list_blobs properties only error:{}'.format(container_name, blob_path, str(e)))
                                 
-                                # Get file sample for metadata extraction
-                                # Fetch metadata for every file to ensure complete information
-                                # For CSV/JSON, we need more bytes to extract columns properly
+
+
+
                                 file_sample = None
                                 try:
                                     if file_extension == "parquet":
-                                        # Parquet metadata is at the end of the file
+
                                         file_sample = blob_client.get_blob_tail(container_name, blob_path, max_bytes=8192)
                                     elif file_extension in ["csv", "json"]:
-                                        # CSV and JSON need more bytes to extract all columns and sample data
+
                                         file_sample = blob_client.get_blob_sample(container_name, blob_path, max_bytes=8192)
                                     else:
                                         file_sample = blob_client.get_blob_sample(container_name, blob_path, max_bytes=1024)
                                 except Exception as e:
                                     logger.warning('FN:discover_assets container_name:{} blob_path:{} message:Could not get sample error:{}'.format(container_name, blob_path, str(e)))
                                 
-                                # Extract metadata (merge Azure properties into blob_info for extract_file_metadata)
+
                                 enhanced_blob_info = {**blob_info, **azure_properties}
                                 if file_sample:
                                     metadata = extract_file_metadata(enhanced_blob_info, file_sample)
                                 else:
                                     metadata = extract_file_metadata(enhanced_blob_info, None)
                                 
-                                # Get hashes for deduplication
+
                                 file_hash = metadata.get("file_hash", generate_file_hash(b""))
                                 schema_hash = metadata.get("schema_hash", generate_schema_hash({}))
                                 
-                                # Check if we should update or insert
+
                                 should_update, schema_changed = should_update_or_insert(
                                     existing_asset,
                                     file_hash,
                                     schema_hash
                                 )
                                 
-                                # Skip if nothing changed OR if asset already exists and we shouldn't update
+
                                 if existing_asset:
                                     if not should_update:
                                         logger.info('FN:discover_assets blob_path:{} existing_asset_id:{} message:Skipping unchanged asset (deduplication)'.format(blob_path, existing_asset.id))
-                                        # Return None to indicate this asset was skipped (deduplication)
+
                                         return None
                                     else:
                                         logger.info('FN:discover_assets blob_path:{} existing_asset_id:{} schema_changed:{} message:Updating existing asset'.format(blob_path, existing_asset.id, schema_changed))
@@ -1909,11 +1878,11 @@ def discover_assets(connection_id):
                                 current_date = datetime.utcnow().isoformat()
                                 
                                 if existing_asset and schema_changed:
-                                    # Update existing asset with new schema
+
                                     existing_asset.name = blob_info["name"]
                                     existing_asset.type = file_extension or "blob"
                                     
-                                    # Build technical metadata from Azure
+
                                     technical_meta = build_technical_metadata(
                                         asset_id=existing_asset.id,
                                         blob_info=enhanced_blob_info,
@@ -1927,13 +1896,13 @@ def discover_assets(connection_id):
                                         current_date=current_date
                                     )
                                     
-                                    # Build operational metadata from Azure
+
                                     operational_meta = build_operational_metadata(
                                         azure_properties=azure_properties,
                                         current_date=current_date
                                     )
                                     
-                                    # Build business metadata from Azure
+
                                     business_meta = build_business_metadata(
                                         blob_info=enhanced_blob_info,
                                         azure_properties=azure_properties,
@@ -1960,12 +1929,12 @@ def discover_assets(connection_id):
                                         "thread_db": thread_db
                                     }
                                 else:
-                                    # Create new asset - use consistent ID without timestamp for deduplication
-                                    # Normalize blob_path for ID generation (remove leading/trailing slashes)
+
+
                                     normalized_path = blob_path.strip('/').replace('/', '_').replace(' ', '_')
                                     asset_id = f"azure_blob_{connection.name}_{normalized_path}"
                                     
-                                    # Build all metadata from Azure properties
+
                                     technical_meta = build_technical_metadata(
                                         asset_id=asset_id,
                                         blob_info=enhanced_blob_info,
@@ -1992,7 +1961,7 @@ def discover_assets(connection_id):
                                     )
                                     
                                     columns_clean = clean_for_json(metadata.get("schema_json", {}).get("columns", []))
-                                    # Store full schema_json for DataDiscovery record
+
                                     schema_json_full = clean_for_json(metadata.get("schema_json", {}))
                                     
                                     return {
@@ -2008,7 +1977,7 @@ def discover_assets(connection_id):
                                             "operational_metadata": operational_meta,
                                             "business_metadata": business_meta,
                                             "columns": columns_clean,
-                                            "schema_json": schema_json_full  # Store full schema_json for DataDiscovery
+                                            "schema_json": schema_json_full
                                         },
                                         "name": asset_name,
                                         "folder": asset_folder,
@@ -2026,7 +1995,7 @@ def discover_assets(connection_id):
                             logger.error('FN:discover_assets container_name:{} blob_name:{} error:{}'.format(container_name, blob_info.get('name', 'unknown'), str(e)), exc_info=True)
                             return None
                     
-                    # Process blobs concurrently with 20 workers
+
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         futures = {executor.submit(process_blob, blob_info): blob_info for blob_info in blobs}
                         
@@ -2036,7 +2005,7 @@ def discover_assets(connection_id):
                                 if result:
                                     container_discovered_assets.append(result)
                                 elif result is None:
-                                    # Asset was skipped due to deduplication (already exists and unchanged)
+
                                     container_skipped_count += 1
                             except Exception as e:
                                 blob_info = futures[future]
@@ -2057,11 +2026,11 @@ def discover_assets(connection_id):
                         "skipped_count": 0
                     }
             
-            # Track total skipped count across all containers
+
             total_skipped_from_containers = 0
             
-            # Process containers concurrently (up to 10 containers in parallel, each with 50 blob workers)
-            # This allows processing up to 500 blobs simultaneously (10 containers * 50 blobs)
+
+
             logger.info('FN:discover_assets total_containers:{} message:Processing containers with 10 concurrent workers'.format(len(containers)))
             with ThreadPoolExecutor(max_workers=min(10, len(containers))) as container_executor:
                 container_futures = {container_executor.submit(process_container, container_name): container_name for container_name in containers}
@@ -2072,7 +2041,7 @@ def discover_assets(connection_id):
                         if result:
                             with discovered_assets_lock:
                                 discovered_assets.extend(result["discovered_assets"])
-                                # Aggregate skipped count from containers
+
                                 total_skipped_from_containers += result.get("skipped_count", 0)
                             with folders_lock:
                                 container_name = container_futures[future]
@@ -2084,22 +2053,22 @@ def discover_assets(connection_id):
             
             logger.info('FN:discover_assets total_assets_to_process:{}'.format(len(discovered_assets)))
             
-            # For very large discoveries, process in batches to avoid memory issues
-            # Optimized batch size for 4000+ files: smaller batches = better error recovery
-            # Configurable via DISCOVERY_BATCH_SIZE env var, default 1500
-            # 1500 files per batch = ~3 batches for 4000 files, more frequent commits
+
+
+
+
             batch_size = int(os.getenv("DISCOVERY_BATCH_SIZE", "1500"))
             total_assets = len(discovered_assets)
             
             if total_assets > 5000:
                 logger.info('FN:discover_assets total_assets:{} batch_size:{} message:Large discovery detected'.format(total_assets, batch_size))
             
-            # Save discovered assets
+
             created_count = 0
             updated_count = 0
-            skipped_count = total_skipped_from_containers  # Start with skipped items from deduplication during discovery
+            skipped_count = total_skipped_from_containers
             
-            # Process in batches for large discoveries
+
             for batch_start in range(0, total_assets, batch_size):
                 batch_end = min(batch_start + batch_size, total_assets)
                 batch = discovered_assets[batch_start:batch_end]
@@ -2112,11 +2081,11 @@ def discover_assets(connection_id):
                 for item in batch:
                     try:
                         if item is None:
-                            # Item was skipped due to deduplication (shouldn't happen here, but handle it)
+
                             skipped_count += 1
                             continue
                         elif item.get("action") == "updated":
-                            # Asset already exists and was updated - commit from thread's db session
+
                             thread_db = item.get("thread_db")
                             if thread_db:
                                 try:
@@ -2129,10 +2098,10 @@ def discover_assets(connection_id):
                                 finally:
                                     thread_db.close()
                             else:
-                                # Fallback: update in main session
+
                                 updated_count += 1
                         elif item.get("action") == "created":
-                            # New asset to create
+
                             asset_data = item["asset_data"]
                             try:
                                 asset = Asset(
@@ -2147,21 +2116,21 @@ def discover_assets(connection_id):
                                     columns=asset_data['columns']
                                 )
                                 db.add(asset)
-                                db.flush()  # Flush to get asset ID before creating discovery record
+                                db.flush()
                             except Exception as flush_error:
-                                # Handle race condition: another thread may have created this asset
+
                                 error_str = str(flush_error)
                                 if "Duplicate entry" in error_str or "1062" in error_str or "UNIQUE constraint" in error_str or "IntegrityError" in error_str:
-                                    # Asset already exists (race condition from concurrent processing)
+
                                     db.rollback()
-                                    # Query for existing asset
+
                                     existing_asset = db.query(Asset).filter(Asset.id == asset_data['id']).first()
                                     if existing_asset:
                                         logger.debug('FN:discover_assets asset_id:{} message:Asset already exists (race condition), skipping duplicate creation'.format(asset_data['id']))
                                         skipped_count += 1
                                         continue
                                     else:
-                                        # Rollback cleared it, retry once
+
                                         try:
                                             asset = Asset(
                                                 id=asset_data['id'],
@@ -2181,11 +2150,11 @@ def discover_assets(connection_id):
                                             skipped_count += 1
                                             continue
                                 else:
-                                    # Different error, re-raise
+
                                     raise
                             
-                            # Create discovery record with sequential ID (auto-increment)
-                            # Extract storage location from technical metadata
+
+
                             tech_meta = asset_data.get('technical_metadata', {})
                             item_config = item.get("config_data", {})
                             item_connection_id = item.get("connection_id")
@@ -2204,7 +2173,7 @@ def discover_assets(connection_id):
                                 }
                             }
                             
-                            # Build file_metadata from technical metadata
+
                             file_metadata = {
                                 "basic": {
                                     "name": asset_data['name'],
@@ -2221,14 +2190,14 @@ def discover_assets(connection_id):
                                 }
                             }
                             
-                            # Get schema_hash from technical metadata
+
                             schema_hash = tech_meta.get("schema_hash", "")
                             
-                            # Get full schema_json (with columns, delimiter, has_header, etc.) from asset_data
-                            # If not available, fallback to building from columns
+
+
                             schema_json_full = asset_data.get('schema_json', {})
                             if not schema_json_full or not isinstance(schema_json_full, dict):
-                                # Fallback: build schema_json from columns
+
                                 columns = asset_data.get('columns', [])
                                 schema_json_full = {
                                     "columns": columns,
@@ -2243,7 +2212,7 @@ def discover_assets(connection_id):
                                 asset_id=asset.id,
                                 storage_location=storage_location,
                                 file_metadata=file_metadata,
-                                schema_json=schema_json_full,  # Use full schema_json dict, not just columns
+                                schema_json=schema_json_full,
                                 schema_hash=schema_hash,
                                 status="pending",
                                 approval_status=None,
@@ -2268,7 +2237,7 @@ def discover_assets(connection_id):
                         skipped_count += 1
                         continue
                 
-                # Commit batch to avoid long transactions
+
                 if total_assets > 5000:
                     try:
                         db.commit()
@@ -2282,11 +2251,11 @@ def discover_assets(connection_id):
                             db.close()
                             db = SessionLocal()
                         
-                        # Check if it's a connection timeout
+
                         error_str = str(e).lower()
                         if 'timeout' in error_str or 'lost connection' in error_str or 'operationalerror' in error_str:
                             logger.warning('FN:discover_assets message:Database connection timeout during batch commit, continuing with next batch')
-                            # Continue processing instead of raising
+
                             continue
                         raise
             
@@ -2300,14 +2269,14 @@ def discover_assets(connection_id):
                     db.rollback()
                 except Exception as rollback_error:
                     logger.error('FN:discover_assets message:Error during rollback error:{}'.format(str(rollback_error)))
-                    # If rollback fails, close the session and create a new one
+
                     db.close()
                     db = SessionLocal()
                 
-                # Check if it's a connection timeout or operational error
+
                 error_str = str(e).lower()
                 if 'timeout' in error_str or 'lost connection' in error_str or 'operationalerror' in error_str:
-                    # Return partial success instead of raising
+
                     logger.warning('FN:discover_assets message:Database connection timeout, returning partial results')
                     return jsonify({
                         "message": "Discovery completed but database commit failed due to connection timeout. Some assets may not be saved.",
@@ -2316,16 +2285,16 @@ def discover_assets(connection_id):
                         "skipped_count": skipped_count,
                         "error": "Database connection timeout during commit",
                         "partial_success": True
-                    }), 207  # 207 Multi-Status for partial success
+                    }), 207
                 raise
             
             total_processed = created_count + updated_count
             
             logger.info('FN:discover_assets total_processed:{} created_count:{} updated_count:{} skipped_count:{} message:Discovery summary'.format(total_processed, created_count, updated_count, skipped_count))
             
-            # Build folder and asset structure for response
-            # Structure: {container: {folder: [assets]}}
-            # If no folders (only root files), folder will be empty string ""
+
+
+
             folder_structure = {}
             for container_name in containers:
                 folder_structure[container_name] = {}
@@ -2339,14 +2308,14 @@ def discover_assets(connection_id):
                             "action": asset_info.get("action", "created")
                         })
             
-            # Determine if containers have folders or just root files
+
             has_folders = {}
             for container_name in containers:
                 folders = folders_found.get(container_name, [])
-                # Check if there are any non-empty folders
+
                 has_folders[container_name] = any(f for f in folders if f != "")
             
-            # Discover File Shares
+
             file_shares_discovered = 0
             try:
                 file_shares = blob_client.list_file_shares()
@@ -2355,7 +2324,7 @@ def discover_assets(connection_id):
                 for share in file_shares:
                     share_name = share["name"]
                     try:
-                        # List files in the share
+
                         share_files = blob_client.list_file_share_files(share_name=share_name, directory_path=folder_path)
                         
                         for file_info in share_files:
@@ -2364,12 +2333,12 @@ def discover_assets(connection_id):
                                 file_extension = file_info.get("name", "").split(".")[-1].lower() if "." in file_info.get("name", "") else ""
                                 connector_id = f"azure_blob_{connection.name}"
                                 
-                                # Check if asset already exists
+
                                 existing_asset = check_asset_exists(db, connector_id, f"file-share://{share_name}/{file_path}") if AZURE_AVAILABLE else None
                                 
-                                # Build asset data
+
                                 storage_path_for_check = f"file-share://{share_name}/{file_path}"
-                                # Generate consistent asset ID (without timestamp for deduplication)
+
                                 normalized_path = file_path.strip('/').replace('/', '_').replace(' ', '_')
                                 asset_id = f"azure_file_{connection.name}_{share_name}_{normalized_path}"
                                 
@@ -2382,7 +2351,7 @@ def discover_assets(connection_id):
                                     "columns": [],
                                     "business_metadata": build_business_metadata(file_info, {}, file_extension, share_name),
                                     "technical_metadata": {
-                                        "location": storage_path_for_check,  # Add location field for deduplication check
+                                        "location": storage_path_for_check,
                                         "file_size": file_info.get("size", 0),
                                         "content_type": file_info.get("content_type", "application/octet-stream"),
                                         "last_modified": file_info.get("last_modified"),
@@ -2394,13 +2363,13 @@ def discover_assets(connection_id):
                                 }
                                 
                                 if existing_asset:
-                                    # Update existing asset
+
                                     existing_asset.business_metadata = asset_data["business_metadata"]
                                     existing_asset.technical_metadata = asset_data["technical_metadata"]
                                     db.commit()
                                     updated_count += 1
                                 else:
-                                    # Create new asset (storage_location is NOT part of Asset model)
+
                                     asset = Asset(**asset_data)
                                     db.add(asset)
                                     db.flush()
@@ -2441,7 +2410,7 @@ def discover_assets(connection_id):
             except Exception as e:
                 logger.warning('FN:discover_assets message:File shares discovery failed error:{}'.format(str(e)))
             
-            # Discover Queues (queues are assets themselves)
+
             queues_discovered = 0
             try:
                 queues = blob_client.list_queues()
@@ -2452,12 +2421,12 @@ def discover_assets(connection_id):
                         queue_name = queue["name"]
                         connector_id = f"azure_blob_{connection.name}"
                         
-                        # Check if asset already exists
+
                         existing_asset = check_asset_exists(db, connector_id, f"queue://{queue_name}") if AZURE_AVAILABLE else None
                         
-                        # Build asset data
+
                         storage_location_str = f"queue://{queue_name}"
-                        # Use consistent ID format (without timestamp to avoid duplicates on refresh)
+
                         asset_id = f"azure_queue_{connection.name}_{queue_name}"
                         
                         asset_data = {
@@ -2473,7 +2442,7 @@ def discover_assets(connection_id):
                                 "tags": [queue_name, "azure_queue"]
                             },
                             "technical_metadata": {
-                                "location": storage_location_str,  # Add location field for deduplication check
+                                "location": storage_location_str,
                                 "service_type": "azure_queue",
                                 "queue_name": queue_name,
                                 "metadata": queue.get("metadata", {}),
@@ -2482,13 +2451,13 @@ def discover_assets(connection_id):
                         }
                         
                         if existing_asset:
-                            # Update existing asset
+
                             existing_asset.business_metadata = asset_data["business_metadata"]
                             existing_asset.technical_metadata = asset_data["technical_metadata"]
                             db.commit()
                             updated_count += 1
                         else:
-                            # Create new asset
+
                             asset = Asset(
                                 id=asset_data["id"],
                                 name=asset_data["name"],
@@ -2541,7 +2510,7 @@ def discover_assets(connection_id):
             except Exception as e:
                 logger.warning('FN:discover_assets message:Queues discovery failed error:{}'.format(str(e)))
             
-            # Discover Tables (tables are assets themselves)
+
             tables_discovered = 0
             try:
                 tables = blob_client.list_tables()
@@ -2552,12 +2521,12 @@ def discover_assets(connection_id):
                         table_name = table["name"]
                         connector_id = f"azure_blob_{connection.name}"
                         
-                        # Check if asset already exists
+
                         existing_asset = check_asset_exists(db, connector_id, f"table://{table_name}") if AZURE_AVAILABLE else None
                         
-                        # Build asset data
+
                         storage_location_str = f"table://{table_name}"
-                        # Use consistent ID format (without timestamp to avoid duplicates on refresh)
+
                         asset_id = f"azure_table_{connection.name}_{table_name}"
                         
                         asset_data = {
@@ -2580,13 +2549,13 @@ def discover_assets(connection_id):
                         }
                         
                         if existing_asset:
-                            # Update existing asset
+
                             existing_asset.business_metadata = asset_data["business_metadata"]
                             existing_asset.technical_metadata = asset_data["technical_metadata"]
                             db.commit()
                             updated_count += 1
                         else:
-                            # Create new asset
+
                             asset = Asset(
                                 id=asset_data["id"],
                                 name=asset_data["name"],
@@ -2639,7 +2608,7 @@ def discover_assets(connection_id):
             except Exception as e:
                 logger.warning('FN:discover_assets message:Tables discovery failed error:{}'.format(str(e)))
             
-            # Update total processed count
+
             total_processed = created_count + updated_count
             
             return jsonify({
@@ -2651,7 +2620,7 @@ def discover_assets(connection_id):
                 "skipped_count": skipped_count,
                 "folders": folders_found,
                 "assets_by_folder": folder_structure,
-                "has_folders": has_folders,  # Indicates if container has subfolders
+                "has_folders": has_folders,
                 "services_discovered": {
                     "containers": len(containers),
                     "file_shares": file_shares_discovered,
@@ -2669,7 +2638,6 @@ def discover_assets(connection_id):
 @app.route('/api/assets/<asset_id>/approve', methods=['POST'])
 @handle_error
 def approve_asset(asset_id):
-    """Approve a discovered asset - updates both assets and data_discovery tables"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -2682,12 +2650,12 @@ def approve_asset(asset_id):
         approval_time = datetime.utcnow()
         asset.operational_metadata["approval_status"] = "approved"
         asset.operational_metadata["approved_at"] = approval_time.isoformat()
-        asset.operational_metadata["approved_by"] = "user"  # TODO: Get from auth
+        asset.operational_metadata["approved_by"] = "user"
         
-        # CRITICAL: Flag the JSON field as modified so SQLAlchemy saves it
+
         flag_modified(asset, "operational_metadata")
         
-        # Also update/create data_discovery record
+
         discovery = db.query(DataDiscovery).filter(DataDiscovery.asset_id == asset_id).first()
         if discovery:
             discovery.approval_status = "approved"
@@ -2698,7 +2666,7 @@ def approve_asset(asset_id):
             discovery.approval_workflow["approved_by"] = "user"
             flag_modified(discovery, "approval_workflow")
         else:
-            # Create new data_discovery record
+
             discovery = DataDiscovery(
                 asset_id=asset_id,
                 storage_location=asset.technical_metadata.get("storage_location", {}) if asset.technical_metadata else {},
@@ -2719,12 +2687,12 @@ def approve_asset(asset_id):
         db.refresh(asset)
         db.refresh(discovery)
         
-        # Verify the save worked
+
         logger.info('FN:approve_asset asset_id:{} approval_status:{} saved_to_db:True'.format(
             asset_id, asset.operational_metadata.get("approval_status")
         ))
         
-        # Return full asset data so frontend can update without refetching
+
         return jsonify({
             "id": asset.id,
             "name": asset.name,
@@ -2750,7 +2718,6 @@ def approve_asset(asset_id):
 @app.route('/api/assets/<asset_id>/reject', methods=['POST'])
 @handle_error
 def reject_asset(asset_id):
-    """Reject a discovered asset - updates both assets and data_discovery tables"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -2766,13 +2733,13 @@ def reject_asset(asset_id):
         rejection_time = datetime.utcnow()
         asset.operational_metadata["approval_status"] = "rejected"
         asset.operational_metadata["rejected_at"] = rejection_time.isoformat()
-        asset.operational_metadata["rejected_by"] = "user"  # TODO: Get from auth
+        asset.operational_metadata["rejected_by"] = "user"
         asset.operational_metadata["rejection_reason"] = reason
         
-        # CRITICAL: Flag the JSON field as modified so SQLAlchemy saves it
+
         flag_modified(asset, "operational_metadata")
         
-        # Also update/create data_discovery record
+
         discovery = db.query(DataDiscovery).filter(DataDiscovery.asset_id == asset_id).first()
         if discovery:
             discovery.approval_status = "rejected"
@@ -2784,7 +2751,7 @@ def reject_asset(asset_id):
             discovery.approval_workflow["rejection_reason"] = reason
             flag_modified(discovery, "approval_workflow")
         else:
-            # Create new data_discovery record
+
             discovery = DataDiscovery(
                 asset_id=asset_id,
                 storage_location=asset.technical_metadata.get("storage_location", {}) if asset.technical_metadata else {},
@@ -2806,7 +2773,7 @@ def reject_asset(asset_id):
         db.refresh(asset)
         db.refresh(discovery)
         
-        # Verify the save worked
+
         logger.info('FN:reject_asset asset_id:{} approval_status:{} saved_to_db:True'.format(
             asset_id, asset.operational_metadata.get("approval_status")
         ))
@@ -2829,14 +2796,13 @@ def reject_asset(asset_id):
 @app.route('/api/assets/<asset_id>/publish', methods=['POST'])
 @handle_error
 def publish_asset(asset_id):
-    """Publish an approved asset - updates both assets and data_discovery tables"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
         if not asset:
             return jsonify({"error": "Asset not found"}), 404
         
-        # Check if asset is approved
+
         approval_status = asset.operational_metadata.get("approval_status") if asset.operational_metadata else None
         if approval_status != "approved":
             return jsonify({"error": f"Asset must be approved before publishing. Current status: {approval_status}"}), 400
@@ -2850,20 +2816,20 @@ def publish_asset(asset_id):
         
         asset.operational_metadata["publish_status"] = "published"
         asset.operational_metadata["published_at"] = publish_time.isoformat()
-        asset.operational_metadata["published_by"] = "user"  # TODO: Get from auth
+        asset.operational_metadata["published_by"] = "user"
         asset.operational_metadata["published_to"] = published_to
         
-        # CRITICAL: Flag the JSON field as modified so SQLAlchemy saves it
+
         flag_modified(asset, "operational_metadata")
         
-        # Also update/create data_discovery record
+
         discovery = db.query(DataDiscovery).filter(DataDiscovery.asset_id == asset_id).first()
         if discovery:
             discovery.status = "published"
             discovery.published_at = publish_time
             discovery.published_to = published_to
         else:
-            # Create new data_discovery record
+
             discovery = DataDiscovery(
                 asset_id=asset_id,
                 storage_location=asset.technical_metadata.get("storage_location", {}) if asset.technical_metadata else {},
@@ -2897,42 +2863,41 @@ def publish_asset(asset_id):
     finally:
         db.close()
 
-# ============================================================================
-# REAL DATA LINEAGE API ENDPOINTS
-# ============================================================================
+
+
+
 
 @app.route('/api/lineage/relationships', methods=['GET'])
 @handle_error
 def get_lineage_relationships():
-    """Get all lineage relationships with end-to-end column-level lineage and quality metrics"""
     db = SessionLocal()
     try:
-        # Filter to only show REAL lineage (exclude inferred/fake)
-        # Only include: sql_parsing, manual, api, etl, dbt, databricks
+
+
         include_inferred = request.args.get('include_inferred', 'false').lower() == 'true'
         
         if include_inferred:
-            # Show all relationships including inferred
+
             relationships = db.query(LineageRelationship).all()
         else:
-            # Only show real lineage - exclude inferred methods
+
             exclude_methods = ['column_matching', 'ml_inference', 'inferred']
             relationships = db.query(LineageRelationship).filter(
                 ~LineageRelationship.extraction_method.in_(exclude_methods)
             ).all()
             
-            # Also filter out relationships with extraction_method = None or empty (likely inferred)
+
             relationships = [rel for rel in relationships 
                            if rel.extraction_method and rel.extraction_method not in exclude_methods]
         
         result = []
         
         for rel in relationships:
-            # Get source and target assets for quality metrics
+
             source_asset = db.query(Asset).filter(Asset.id == rel.source_asset_id).first()
             target_asset = db.query(Asset).filter(Asset.id == rel.target_asset_id).first()
             
-            # Calculate quality scores
+
             source_quality = None
             target_quality = None
             if source_asset:
@@ -2951,11 +2916,11 @@ def get_lineage_relationships():
                 }
                 target_quality = calculate_asset_quality_score(target_asset_dict)
             
-            # Build end-to-end column lineage
+
             column_lineage = rel.column_lineage or []
             end_to_end_lineage = []
             
-            # If we have column lineage, enhance it with quality info
+
             for col_rel in column_lineage:
                 enhanced_col = {
                     **col_rel,
@@ -2985,7 +2950,7 @@ def get_lineage_relationships():
                 "target_quality": target_quality
             }
             
-            # Add quality propagation if both qualities exist
+
             if source_quality and target_quality:
                 relationship_dict = {
                     'transformation_type': rel.transformation_type or 'pass_through'
@@ -3006,18 +2971,17 @@ def get_lineage_relationships():
 @app.route('/api/lineage/relationships', methods=['POST'])
 @handle_error
 def create_lineage_relationship():
-    """Create a new lineage relationship"""
     db = SessionLocal()
     try:
         data = request.json
         if not data:
             return jsonify({"error": "Request body is required"}), 400
         
-        # Validate required fields
+
         if not data.get('source_asset_id') or not data.get('target_asset_id'):
             return jsonify({"error": "source_asset_id and target_asset_id are required"}), 400
         
-        # Check if assets exist
+
         source_asset = db.query(Asset).filter(Asset.id == data['source_asset_id']).first()
         target_asset = db.query(Asset).filter(Asset.id == data['target_asset_id']).first()
         
@@ -3026,7 +2990,7 @@ def create_lineage_relationship():
         if not target_asset:
             return jsonify({"error": f"Target asset {data['target_asset_id']} not found"}), 404
         
-        # Create relationship
+
         relationship = LineageRelationship(
             source_asset_id=data['source_asset_id'],
             target_asset_id=data['target_asset_id'],
@@ -3073,7 +3037,6 @@ def create_lineage_relationship():
 @app.route('/api/lineage/sql/parse', methods=['POST'])
 @handle_error
 def parse_sql_lineage():
-    """Parse SQL query and extract lineage"""
     try:
         data = request.json
         if not data or not data.get('sql_query'):
@@ -3085,10 +3048,10 @@ def parse_sql_lineage():
         job_id = data.get('job_id')
         job_name = data.get('job_name')
         
-        # Extract lineage
+
         lineage_result = extract_lineage_from_sql(sql_query, dialect)
         
-        # Store SQL query for future reference
+
         db = SessionLocal()
         sql_record = None
         try:
@@ -3127,20 +3090,19 @@ def parse_sql_lineage():
 @app.route('/api/lineage/infer', methods=['POST'])
 @handle_error
 def infer_lineage_relationships():
-    """Infer lineage relationships based on column name matching"""
     db = SessionLocal()
     try:
         data = request.json or {}
         min_confidence = float(data.get('min_confidence', 0.5))
         min_matching_columns = int(data.get('min_matching_columns', 2))
         
-        # Get all assets with columns
+
         assets = db.query(Asset).filter(Asset.columns.isnot(None)).all()
         
         created_relationships = []
         skipped_relationships = []
         
-        # Compare each pair of assets
+
         for i, source_asset in enumerate(assets):
             source_columns = source_asset.columns or []
             if not source_columns or len(source_columns) == 0:
@@ -3155,7 +3117,7 @@ def infer_lineage_relationships():
                     
                 target_col_names = {col.get('name', '').lower() for col in target_columns if col.get('name')}
                 
-                # Use ML-based inference for better matching
+
                 column_lineage, confidence = infer_relationships_ml(
                     source_columns,
                     target_columns,
@@ -3165,7 +3127,7 @@ def infer_lineage_relationships():
                 if len(column_lineage) < min_matching_columns:
                     continue
                 
-                # Check if relationship already exists
+
                 existing = db.query(LineageRelationship).filter(
                     LineageRelationship.source_asset_id == source_asset.id,
                     LineageRelationship.target_asset_id == target_asset.id
@@ -3182,7 +3144,7 @@ def infer_lineage_relationships():
                 if confidence < min_confidence:
                     continue
                 
-                # Create relationship
+
                 relationship = LineageRelationship(
                     source_asset_id=source_asset.id,
                     target_asset_id=target_asset.id,
@@ -3194,7 +3156,7 @@ def infer_lineage_relationships():
                     transformation_description=f'Inferred from {len(column_lineage)} matching columns using ML',
                     source_system=source_asset.connector_id.split('_')[0] if source_asset.connector_id else 'unknown',
                     confidence_score=confidence,
-                    extraction_method='ml_inference',  # Mark as inferred for filtering
+                    extraction_method='ml_inference',
                     discovered_at=datetime.utcnow()
                 )
                 
@@ -3231,7 +3193,6 @@ def infer_lineage_relationships():
 @app.route('/api/lineage/sql/parse-and-create', methods=['POST'])
 @handle_error
 def parse_sql_and_create_lineage():
-    """Parse SQL query and automatically create lineage relationships"""
     db = SessionLocal()
     try:
         data = request.json
@@ -3244,7 +3205,7 @@ def parse_sql_and_create_lineage():
         job_id = data.get('job_id')
         job_name = data.get('job_name')
         
-        # Extract lineage
+
         lineage_result = extract_lineage_from_sql(sql_query, dialect)
         
         if not lineage_result.get('target_table') or not lineage_result.get('source_tables'):
@@ -3254,7 +3215,7 @@ def parse_sql_and_create_lineage():
                 "message": "No target or source tables found in query"
             }), 200
         
-        # Store SQL query
+
         sql_record = SQLQuery(
             query_text=sql_query,
             query_type=lineage_result.get('query_type'),
@@ -3268,7 +3229,7 @@ def parse_sql_and_create_lineage():
         db.commit()
         db.refresh(sql_record)
         
-        # Find target asset by name
+
         target_table = lineage_result['target_table']
         target_asset = db.query(Asset).filter(
             Asset.name.ilike(f'%{target_table}%')
@@ -3282,7 +3243,7 @@ def parse_sql_and_create_lineage():
                 "message": f"Target asset '{target_table}' not found"
             }), 200
         
-        # Create relationships for each source table
+
         created_count = 0
         for source_table in lineage_result.get('source_tables', []):
             source_asset = db.query(Asset).filter(
@@ -3292,7 +3253,7 @@ def parse_sql_and_create_lineage():
             if not source_asset:
                 continue
             
-            # Check if relationship already exists
+
             existing = db.query(LineageRelationship).filter(
                 LineageRelationship.source_asset_id == source_asset.id,
                 LineageRelationship.target_asset_id == target_asset.id
@@ -3301,7 +3262,7 @@ def parse_sql_and_create_lineage():
             if existing:
                 continue
             
-            # Create relationship
+
             relationship = LineageRelationship(
                 source_asset_id=source_asset.id,
                 target_asset_id=target_asset.id,
@@ -3347,24 +3308,23 @@ def parse_sql_and_create_lineage():
 @app.route('/api/lineage/impact/<asset_id>', methods=['GET'])
 @handle_error
 def get_impact_analysis(asset_id):
-    """Get impact analysis for an asset - what breaks if this asset changes"""
     db = SessionLocal()
     try:
-        # Find all relationships where this asset is a source (downstream impact)
+
         downstream = db.query(LineageRelationship).filter(
             LineageRelationship.source_asset_id == asset_id
         ).all()
         
-        # Find all relationships where this asset is a target (upstream dependencies)
+
         upstream = db.query(LineageRelationship).filter(
             LineageRelationship.target_asset_id == asset_id
         ).all()
         
-        # Build impact tree
+
         impacted_assets = set()
         impact_paths = []
         
-        # Direct downstream impact
+
         for rel in downstream:
             impacted_assets.add(rel.target_asset_id)
             impact_paths.append({
@@ -3377,7 +3337,7 @@ def get_impact_analysis(asset_id):
                 "depth": 1
             })
         
-        # Recursive downstream impact (2 levels deep)
+
         for rel in downstream:
             second_level = db.query(LineageRelationship).filter(
                 LineageRelationship.source_asset_id == rel.target_asset_id
@@ -3394,7 +3354,7 @@ def get_impact_analysis(asset_id):
                     "depth": 2
                 })
         
-        # Get asset details for impacted assets
+
         impacted_asset_details = []
         for asset_id_str in impacted_assets:
             asset = db.query(Asset).filter(Asset.id == asset_id_str).first()
@@ -3406,7 +3366,7 @@ def get_impact_analysis(asset_id):
                     "catalog": asset.catalog
                 })
         
-        # Get upstream dependencies
+
         dependency_assets = []
         for rel in upstream:
             asset = db.query(Asset).filter(Asset.id == rel.source_asset_id).first()
@@ -3453,24 +3413,23 @@ def get_impact_analysis(asset_id):
 @app.route('/api/lineage/asset/<asset_id>', methods=['GET'])
 @handle_error
 def get_asset_lineage(asset_id):
-    """Get complete lineage for a specific asset (upstream and downstream)"""
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
         if not asset:
             return jsonify({"error": "Asset not found"}), 404
         
-        # Get upstream (sources)
+
         upstream_rels = db.query(LineageRelationship).filter(
             LineageRelationship.target_asset_id == asset_id
         ).all()
         
-        # Get downstream (targets)
+
         downstream_rels = db.query(LineageRelationship).filter(
             LineageRelationship.source_asset_id == asset_id
         ).all()
         
-        # Build lineage graph
+
         nodes = [{
             "id": asset.id,
             "name": asset.name,
@@ -3482,7 +3441,7 @@ def get_asset_lineage(asset_id):
         edges = []
         node_ids = {asset.id}
         
-        # Add upstream nodes and edges
+
         for rel in upstream_rels:
             source_asset = db.query(Asset).filter(Asset.id == rel.source_asset_id).first()
             if source_asset and source_asset.id not in node_ids:
@@ -3504,7 +3463,7 @@ def get_asset_lineage(asset_id):
                 "confidence_score": float(rel.confidence_score) if rel.confidence_score else None
             })
         
-        # Add downstream nodes and edges
+
         for rel in downstream_rels:
             target_asset = db.query(Asset).filter(Asset.id == rel.target_asset_id).first()
             if target_asset and target_asset.id not in node_ids:

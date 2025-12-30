@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Clear all application tables from the database and reset AUTO_INCREMENT."""
+
 
 import os
 from pathlib import Path
@@ -9,10 +8,6 @@ from dotenv import load_dotenv
 
 
 def _load_backend_env() -> None:
-    """
-    Always load the backend/.env (project-specific) instead of relying on
-    cwd or global environment.
-    """
     project_root = Path(__file__).resolve().parent
     backend_env = project_root / "backend" / ".env"
     load_dotenv(dotenv_path=str(backend_env), override=True)
@@ -44,7 +39,7 @@ try:
     cursor.execute("SET SESSION wait_timeout = 600")
     cursor.execute("SET SESSION interactive_timeout = 600")
     
-    # Use DELETE instead of TRUNCATE for better reliability with large tables
+
     print("  Deleting from lineage_relationships...")
     cursor.execute("DELETE FROM lineage_relationships")
     print("  Deleting from sql_queries...")
@@ -56,7 +51,7 @@ try:
     print("  Deleting from connections...")
     cursor.execute("DELETE FROM connections")
     
-    # Reset AUTO_INCREMENT
+
     print("  Resetting AUTO_INCREMENT...")
     cursor.execute("ALTER TABLE data_discovery AUTO_INCREMENT = 1")
     cursor.execute("ALTER TABLE connections AUTO_INCREMENT = 1")
@@ -64,7 +59,7 @@ try:
     cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
     conn.commit()
     
-    # Verify
+
     cursor.execute("SELECT COUNT(*) FROM assets")
     asset_count = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM connections")

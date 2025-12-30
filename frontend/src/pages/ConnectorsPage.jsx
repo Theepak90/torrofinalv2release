@@ -44,9 +44,9 @@ import {
   Replay,
 } from '@mui/icons-material';
 
-// Azure Service Principal Credentials from Environment Variables
-// Note: Vite requires VITE_ prefix for environment variables to be accessible in browser
-// All values must be set in frontend/.env file
+
+
+
 const HARDCODED_AZURE_CREDENTIALS = {
   auth_method: 'service_principal',
   storage_type: 'datalake',
@@ -143,12 +143,12 @@ const ConnectorsPage = () => {
         const result = await response.json();
         const deletedCount = result.deleted_assets || 0;
         
-        // Remove connection from list
+        
         setMyConnections(prev => prev.filter(conn => conn.id !== connectionId));
         setDeleteDialogOpen(false);
         setConnectionToDelete(null);
         
-        // Show success message
+        
         alert(`Connection deleted successfully. ${deletedCount} associated asset(s) were also removed.`);
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -170,7 +170,7 @@ const ConnectorsPage = () => {
       id: 'azure_blob',
       name: 'Azure Data Blob Storage',
       description: 'Connect to Azure Blob Storage and Azure Data Lake Gen2',
-      logo: 'https://azure.microsoft.com/svghandler/storage/',
+      logo: 'https:
       fallbackIcon: <Cloud />,
       color: '#0078D4',
       connectionTypes: ['Connection String', 'Service Principal'],
@@ -187,7 +187,7 @@ const ConnectorsPage = () => {
   const handleConnectClick = (connector) => {
     setSelectedConnector(connector);
     setActiveStep(0);
-    setConnectionType(''); // Let user choose
+    setConnectionType(''); 
     setConfig({});
     setTestResult(null);
     setWizardOpen(true);
@@ -217,7 +217,7 @@ const ConnectorsPage = () => {
     try {
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
       
-      // Only use hardcoded credentials for Service Principal
+      
       const finalConfig = connectionType === 'Service Principal' ? {
         ...config,
         account_name: HARDCODED_AZURE_CREDENTIALS.storage_account_name,
@@ -229,7 +229,7 @@ const ConnectorsPage = () => {
         use_dfs_endpoint: true,
       } : config;
       
-      // Check if connection already exists
+      
       let connection = null;
       const existingConnectionsResponse = await fetch(`${API_BASE_URL}/api/connections`);
       if (existingConnectionsResponse.ok) {
@@ -241,7 +241,7 @@ const ConnectorsPage = () => {
       
       let response;
       if (connection) {
-        // Connection exists, update it instead of creating new one
+        
         response = await fetch(`${API_BASE_URL}/api/connections/${connection.id}`, {
           method: 'PUT',
           headers: {
@@ -254,7 +254,7 @@ const ConnectorsPage = () => {
           }),
         });
       } else {
-        // Create new connection
+        
         response = await fetch(`${API_BASE_URL}/api/connections`, {
           method: 'POST',
           headers: {
@@ -299,7 +299,7 @@ const ConnectorsPage = () => {
 
   const handleTestConnection = async () => {
     if (selectedConnector?.id === 'azure_blob') {
-      // Validate - only need connection name since credentials are hardcoded
+      
       if (!config.name) {
         setTestResult({ 
           success: false, 
@@ -315,7 +315,7 @@ const ConnectorsPage = () => {
       try {
         const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
         
-        // Only use hardcoded credentials for Service Principal
+        
         const finalConfig = connectionType === 'Service Principal' ? {
           ...config,
           account_name: HARDCODED_AZURE_CREDENTIALS.storage_account_name,
@@ -327,7 +327,7 @@ const ConnectorsPage = () => {
           use_dfs_endpoint: true,
         } : config;
         
-        // TEST THE CONNECTION FIRST (before saving)
+        
         setDiscoveryProgress(prev => [...prev, 'Testing Azure Blob Storage connection...']);
         const testResponse = await fetch(`${API_BASE_URL}/api/connections/test-config`, {
           method: 'POST',
@@ -339,7 +339,7 @@ const ConnectorsPage = () => {
           }),
         });
         
-        // Check if response is OK and is JSON
+        
         if (!testResponse.ok) {
           const contentType = testResponse.headers.get('content-type');
           let errorMessage = `Server returned ${testResponse.status} ${testResponse.statusText}`;
@@ -349,10 +349,10 @@ const ConnectorsPage = () => {
               const errorData = await testResponse.json();
               errorMessage = errorData.error || errorData.message || errorMessage;
             } catch (e) {
-              // If JSON parsing fails, use default message
+              
             }
           } else {
-            // Response is not JSON (likely HTML error page)
+            
             const textResponse = await testResponse.text();
             errorMessage = `Backend error: ${testResponse.status}. Please check if the backend service is running.`;
           }
@@ -364,7 +364,7 @@ const ConnectorsPage = () => {
           return;
         }
         
-        // Check content-type before parsing JSON
+        
         const contentType = testResponse.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
           const textResponse = await testResponse.text();
@@ -375,12 +375,12 @@ const ConnectorsPage = () => {
           return;
         }
         
-        // Safely parse JSON with error handling
+        
         let testData;
         try {
           testData = await testResponse.json();
         } catch (jsonError) {
-          // If JSON parsing fails even after content-type check, it's likely HTML
+          
           const textResponse = await testResponse.text();
           setTestResult({
             success: false,
@@ -390,7 +390,7 @@ const ConnectorsPage = () => {
         }
         
         if (!testData.success) {
-          // Test failed - don't save anything
+          
           setTestResult({
             success: false,
             message: testData.message || 'Connection test failed',
@@ -398,10 +398,10 @@ const ConnectorsPage = () => {
           return;
         }
         
-        // Test successful - now save the connection
+        
         setDiscoveryProgress(prev => [...prev, `✓ Connection test successful!`]);
         
-        // Check if connection already exists
+        
         let connection = null;
         const existingConnectionsResponse = await fetch(`${API_BASE_URL}/api/connections`);
         if (existingConnectionsResponse.ok) {
@@ -412,7 +412,7 @@ const ConnectorsPage = () => {
         }
         
         if (connection) {
-          // Connection exists, update it
+          
           setDiscoveryProgress(prev => [...prev, 'Updating existing connection...']);
           const updateResponse = await fetch(`${API_BASE_URL}/api/connections/${connection.id}`, {
             method: 'PUT',
@@ -434,7 +434,7 @@ const ConnectorsPage = () => {
           connection = await updateResponse.json();
           setDiscoveryProgress(prev => [...prev, 'Connection updated successfully']);
         } else {
-          // Create new connection (only after successful test)
+          
           setDiscoveryProgress(prev => [...prev, 'Saving connection...']);
           const createResponse = await fetch(`${API_BASE_URL}/api/connections`, {
             method: 'POST',
@@ -459,26 +459,26 @@ const ConnectorsPage = () => {
           setDiscoveryProgress(prev => [...prev, 'Connection saved successfully']);
         }
         
-        // Connection is saved and tested successfully
+        
         if (testData.success) {
           setDiscoveryProgress(prev => [...prev, `✓ Connection successful!`]);
           
-          // List containers
+          
           setDiscoveryProgress(prev => [...prev, 'Discovering containers...']);
           const containersResponse = await fetch(`${API_BASE_URL}/api/connections/${connection.id}/containers`);
           const containersData = await containersResponse.json();
           
           if (containersData.containers && containersData.containers.length > 0) {
-            // Store containers in config
+            
             const containerNames = containersData.containers.map(c => c.name);
             setConfig({...config, containers: containerNames});
             
-            // Show each container
+            
             containersData.containers.forEach(container => {
               setDiscoveryProgress(prev => [...prev, `[CONTAINER] ${container.name}`]);
             });
             
-            // Automatically start discovery of all assets in containers
+            
             try {
               const discoverResponse = await fetch(`${API_BASE_URL}/api/connections/${connection.id}/discover`, {
             method: 'POST',
@@ -499,22 +499,22 @@ const ConnectorsPage = () => {
               const discoverData = await discoverResponse.json();
               
               if (discoverData.success !== false) {
-                // Show folders and assets for each container
+                
                 if (discoverData.assets_by_folder) {
                   Object.keys(discoverData.assets_by_folder).forEach(containerName => {
                     const folders = discoverData.assets_by_folder[containerName];
                     const hasFolders = discoverData.has_folders?.[containerName] || false;
                     const folderKeys = Object.keys(folders).sort();
                     
-                    // If no folders (only root files), show files directly under container
+                    
                     if (!hasFolders) {
-                      // Only root files exist
+                      
                       const rootAssets = folders[""] || [];
                       rootAssets.forEach(asset => {
                         setDiscoveryProgress(prev => [...prev, `  [FILE] ${asset.name}`]);
                       });
                     } else {
-                      // Has folders, show folder structure
+                      
                       folderKeys.forEach(folderPath => {
                         const folderName = folderPath || '(root)';
                         const assets = folders[folderPath];
@@ -573,11 +573,11 @@ const ConnectorsPage = () => {
           }
         }
       } catch (error) {
-        // Handle network errors, JSON parse errors, etc.
+        
         let errorMessage = 'Failed to test connection';
         
         if (error.message) {
-          // Check if it's a JSON parse error
+          
           if (error.message.includes('JSON') || error.message.includes('unexpected token')) {
             errorMessage = `Backend returned invalid response. Please check if the backend service is running on port 8099. Error: ${error.message}`;
           } else {
@@ -614,7 +614,7 @@ const ConnectorsPage = () => {
                 onChange={(e) => {
                   const selectedType = e.target.value;
                   setConnectionType(selectedType);
-                  // If Service Principal is selected, pre-fill with hardcoded credentials
+                  
                   if (selectedType === 'Service Principal') {
                     setConfig({
                       account_name: HARDCODED_AZURE_CREDENTIALS.storage_account_name,
@@ -626,7 +626,7 @@ const ConnectorsPage = () => {
                       use_dfs_endpoint: true,
                     });
                   } else {
-                    // Clear config for Connection String
+                    
                     setConfig({});
                   }
                 }}
