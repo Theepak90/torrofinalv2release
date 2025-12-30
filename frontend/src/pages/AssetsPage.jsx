@@ -1445,26 +1445,9 @@ const AssetsPage = () => {
                                 Table Tags
                               </Typography>
                               <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                                {selectedAsset?.business_metadata?.tags && selectedAsset.business_metadata.tags.length > 0 ? (
-                                  selectedAsset.business_metadata.tags.map((tag, index) => (
-                                    <Chip 
-                                      key={index} 
-                                      label={tag} 
-                                      size="small" 
-                                      variant="outlined"
-                                      sx={{ 
-                                        backgroundColor: '#e3f2fd', 
-                                        color: '#1565c0', 
-                                        border: '1px solid #90caf9',
-                                        fontWeight: 600
-                                      }}
-                                    />
-                                  ))
-                                ) : (
-                                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                    No table tags
-                                  </Typography>
-                                )}
+                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                  No table tags
+                                </Typography>
                               </Box>
                             </CardContent>
                           </Card>
@@ -1476,48 +1459,9 @@ const AssetsPage = () => {
                                 Column Tags
                               </Typography>
                               <Box sx={{ mt: 1 }}>
-                                {selectedAsset?.columns && selectedAsset.columns.length > 0 ? (() => {
-                                  
-                                  const allColumnTags = [];
-                                  selectedAsset.columns.forEach(column => {
-                                    const columnTags = column.tags || [];
-                                    columnTags.forEach(tag => {
-                                      if (!allColumnTags.includes(tag)) {
-                                        allColumnTags.push(tag);
-                                      }
-                                    });
-                                  });
-                                  
-                                  if (allColumnTags.length > 0) {
-                                      return (
-                                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                        {allColumnTags.map((tag, tagIndex) => (
-                                              <Chip 
-                                                key={tagIndex} 
-                                                label={tag} 
-                                                size="small" 
-                                                variant="outlined"
-                                                sx={{ 
-                                                  backgroundColor: '#f3e5f5', 
-                                                  color: '#7b1fa2', 
-                                                  border: '1px solid #ce93d8',
-                                                  fontWeight: 600
-                                                }}
-                                              />
-                                            ))}
-                                        </Box>
-                                      );
-                                    }
-                                  return (
-                                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                      No column tags
-                                    </Typography>
-                                  );
-                                })() : (
-                                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                    No column tags
-                                  </Typography>
-                                )}
+                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                  No column tags
+                                </Typography>
                               </Box>
                             </CardContent>
                           </Card>
